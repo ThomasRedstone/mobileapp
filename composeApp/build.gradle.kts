@@ -289,6 +289,19 @@ configurations.matching { it.name.contains("desktopRuntimeClasspath") }.configur
     exclude(group = "dev.datlag", module = "kcef")
 }
 
+// desktopRun (KotlinJvmRun, an internal KGP task type we can't configure directly - see
+// docs/ubuntu-touch-poc-plan.md) doesn't propagate $DISPLAY to the child JVM, and AWT needs a
+// real one to open a window over Xwayland. Prints a ready-to-use classpath so `java` can be
+// invoked directly from a shell instead, where environment inheritance works normally.
+tasks.register("printDesktopRuntimeClasspath") {
+    doLast {
+        val cp = configurations.getByName("desktopRuntimeClasspath").files.joinToString(":") { it.absolutePath }
+        println("DESKTOP_CLASSPATH_START")
+        println(cp + ":" + layout.buildDirectory.dir("classes/kotlin/desktop/main").get().asFile.absolutePath)
+        println("DESKTOP_CLASSPATH_END")
+    }
+}
+
 
 compose.resources {
     packageOfResClass = "coreapp.composeapp.generated.resources"
