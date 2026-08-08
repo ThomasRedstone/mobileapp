@@ -164,6 +164,11 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
+        // compose.desktop.application.mainClass (below) doesn't wire into Kotlin's own
+        // `desktopRun` task - that needs its own mainRun {} config.
+        mainRun {
+            mainClass.set("coredevices.coreapp.MainKt")
+        }
     }
 
     sourceSets {
