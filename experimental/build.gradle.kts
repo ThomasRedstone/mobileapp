@@ -192,6 +192,7 @@ kotlin {
                 implementation(libs.kotlinx.io.core)
                 implementation(libs.kermit)
                 implementation(project(":util"))
+                implementation(project(":pebble"))
                 implementation(libs.serialization)
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.settings)

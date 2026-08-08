@@ -4,7 +4,7 @@ import co.touchlab.kermit.Logger
 import com.mmk.kmpnotifier.notification.NotifierManager
 import com.russhwolf.settings.Settings
 import coredevices.CoreBackgroundSync
-import coredevices.ExperimentalDevices
+import coredevices.ExperimentalDevicesFacade
 import coredevices.analytics.AnalyticsBackend
 import coredevices.analytics.CoreAnalytics
 import coredevices.analytics.setUser
@@ -55,7 +55,7 @@ class CommonAppDelegate(
     private val pebbleAppDelegate: PebbleAppDelegate,
     private val appUpdate: AppUpdate,
     private val weatherFetcher: WeatherFetcher,
-    private val experimentalDevices: ExperimentalDevices,
+    private val experimentalDevices: ExperimentalDevicesFacade,
     private val coreConfigHolder: CoreConfigHolder,
     private val appContext: AppContext,
     private val usersDao: UsersDao,

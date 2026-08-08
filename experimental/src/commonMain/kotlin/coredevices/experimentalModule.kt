@@ -220,7 +220,7 @@ val experimentalModule = module {
     singleOf(::RingSync)
     singleOf(::IndexNotificationManager)
     singleOf(::RingPairing)
-    singleOf(::ExperimentalDevices)
+    singleOf(::ExperimentalDevices) bind ExperimentalDevicesFacade::class
     singleOf(::PrefsCollectionIndexStorage) bind CollectionIndexStorage::class
     factory { HackyPermissionRequesterProvider { get<PermissionRequester>() } }
     singleOf(::LLMLocationProvider)

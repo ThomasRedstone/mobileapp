@@ -194,6 +194,7 @@ kotlin {
             implementation(libs.play.update.ktx)
             implementation(libs.coil.gif)
             implementation(libs.coredevices.haversine)
+            implementation(project(":experimental"))
         }
         getByName("androidHostTest").dependencies {
             implementation(libs.ktor.client.okhttp)
@@ -202,6 +203,7 @@ kotlin {
             implementation(libs.ktor.client.darwin)
             implementation(libs.crashkios)
             implementation(libs.firebase.crashlytics)
+            implementation(project(":experimental"))
         }
         val desktopMain by getting {
             dependencies {
@@ -247,11 +249,13 @@ kotlin {
             implementation(libs.coroutines)
             implementation(project(":pebble"))
             implementation(project(":util"))
-            implementation(project(":experimental"))
+            // :experimental (Ring/Index device features) is android/iOS-only: it pulls in
+            // :libindex, which needs the coredevices.haversine BLE library — no jvm() target.
+            // Shared UI reaches it only through ExperimentalDevicesFacade (:util), bound to
+            // the real ExperimentalDevices on android/iOS and a no-op on desktop.
             implementation(libs.kmpnotifier)
             implementation(libs.kmpio)
             implementation(project(":libpebble3"))
-            implementation(project(":libindex"))
             implementation(project(":index-ai"))
             api(project(":mcp"))
             implementation(libs.health.kmp)

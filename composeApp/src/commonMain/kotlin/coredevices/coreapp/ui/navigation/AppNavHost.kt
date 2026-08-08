@@ -19,12 +19,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
 import co.touchlab.kermit.Logger
 import coredevices.EnableExperimentalDevices
-import coredevices.ExperimentalDevices
-import coredevices.ring.ui.navigation.RingRoute
+import coredevices.ExperimentalDevicesFacade
 import coredevices.coreapp.ui.screens.BugReportScreen
 import coredevices.coreapp.ui.screens.BugReportsListScreen
 import coredevices.coreapp.ui.screens.OnboardingScreen
-import coredevices.coreapp.ui.screens.ringonboarding.RingOnboardingScreen
 import coredevices.coreapp.ui.screens.ViewBugReportScreen
 import coredevices.coreapp.ui.screens.WatchOnboardingScreen
 import coredevices.pebble.PebbleDeepLinkHandler
@@ -107,7 +105,7 @@ fun AppNavHost(navController: NavHostController, startDestination: Any) {
             }
         }
     }
-    val experimentalDevices: ExperimentalDevices = koinInject()
+    val experimentalDevices: ExperimentalDevicesFacade = koinInject()
     NavHost(navController, startDestination = startDestination) {
         experimentalDevices.addExperimentalRoutes(this, coreNav)
         addPebbleRoutes(
@@ -121,7 +119,7 @@ fun AppNavHost(navController: NavHostController, startDestination: Any) {
             addExperimentalRoutes = { scopedCoreNav ->
                 experimentalDevices.addExperimentalRoutes(this, scopedCoreNav)
             },
-            isInnerScopedRoute = { it is RingRoute },
+            isInnerScopedRoute = { experimentalDevices.isRingRoute(it) },
         )
         if (CommonBuildKonfig.QA) {
             composable<CommonRoutes.BugReport>(
@@ -192,7 +190,7 @@ fun AppNavHost(navController: NavHostController, startDestination: Any) {
                 )
             }
             composable<CommonRoutes.RingOnboardingRoute> {
-                RingOnboardingScreen(
+                experimentalDevices.RingOnboardingScreen(
                     coreNav = coreNav,
                 )
             }

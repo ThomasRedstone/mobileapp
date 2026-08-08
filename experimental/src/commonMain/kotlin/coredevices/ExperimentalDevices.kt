@@ -2,6 +2,7 @@ package coredevices
 
 import BugReportButton
 import CoreNav
+import CoreRoute
 import DocumentAttachment
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
@@ -29,10 +30,12 @@ import coredevices.ring.database.room.repository.RecordingRepository
 import coredevices.ring.service.RingSync
 import coredevices.ring.service.recordings.RecordingProcessingQueue
 import coredevices.ring.storage.RecordingStorage
+import coredevices.ring.ui.navigation.RingRoute
 import coredevices.ring.ui.navigation.RingRoutes
 import coredevices.ring.ui.navigation.addRingRoutes
 import coredevices.ring.ui.screens.home.FeedTabContents
 import coredevices.ring.ui.screens.home.IndexFeedScreen
+import coredevices.ring.util.trace.TraceSessionExporter
 import coredevices.util.Permission
 import coredevices.util.PermissionRequester
 import dev.gitlive.firebase.Firebase
@@ -55,6 +58,7 @@ import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
 import kotlinx.serialization.json.Json
 import org.koin.compose.koinInject
+import org.koin.mp.KoinPlatform
 import rememberOpenDocumentLauncher
 import size
 import kotlin.time.Clock
@@ -76,7 +80,7 @@ class ExperimentalDevices(
      *  RecordingProcessingQueue's recording observer kicks off). */
     private val indexFeedSyncService: coredevices.ring.service.indexfeed.IndexFeedSyncService,
     private val defaultListsBootstrap: coredevices.ring.service.indexfeed.DefaultListsBootstrap,
-) {
+) : ExperimentalDevicesFacade {
     private val scope = CoroutineScope(Dispatchers.Default)
     fun appInit() {
         libIndex.init(
@@ -109,7 +113,7 @@ class ExperimentalDevices(
         }
     }
 
-    suspend fun init() {
+    override suspend fun init() {
         withContext(Dispatchers.IO) {
             sandboxRepository.seedDatabase()
         }
@@ -123,7 +127,7 @@ class ExperimentalDevices(
         }
     }
 
-    fun onBackgroundSync() {
+    override fun onBackgroundSync() {
         ringDelegate.onBackgroundSync()
     }
 
@@ -131,14 +135,23 @@ class ExperimentalDevices(
         return shortcutActionHandler.handleDeepLink(uri)
     }
 
-    fun addExperimentalRoutes(builder: NavGraphBuilder, coreNav: CoreNav) {
+    override fun addExperimentalRoutes(builder: NavGraphBuilder, coreNav: CoreNav) {
         builder.addRingRoutes(coreNav)
     }
 
-    fun badCollectionsDir(): Path? = RingSync.badCollectionsDir
+    override fun isRingRoute(route: CoreRoute): Boolean = route is RingRoute
+    override fun ringObjectRoute(objectId: String): CoreRoute = RingRoutes.ObjectDetails(objectId)
+    override fun ringRecordingRoute(recordingId: Long): CoreRoute = RingRoutes.RecordingDetails(recordingId)
+
+    override fun badCollectionsDir(): Path? = RingSync.badCollectionsDir
 
     @Composable
-    fun IndexScreen(coreNav: CoreNav, topBarParams: TopBarParams) {
+    override fun RingOnboardingScreen(coreNav: CoreNav) {
+        coredevices.coreapp.ui.screens.ringonboarding.RingOnboardingScreen(coreNav = coreNav)
+    }
+
+    @Composable
+    override fun IndexScreen(coreNav: CoreNav, topBarParams: TopBarParams) {
         val recordingQueue = koinInject<RecordingProcessingQueue>()
         val recordingRepo = koinInject<RecordingRepository>()
         val recordingStorage = koinInject<RecordingStorage>()
@@ -207,7 +220,7 @@ class ExperimentalDevices(
         // callable-ref keep-alive was always cosmetic.)
     }
 
-    suspend fun exportOutput(id: String): List<DocumentAttachment> {
+    override suspend fun exportOutput(id: String): List<DocumentAttachment> {
         val logger = co.touchlab.kermit.Logger.withTag("ExperimentalDevices")
         val attachments = mutableListOf<DocumentAttachment>()
         // Export both the processed audio and the original raw capture for the
@@ -239,7 +252,7 @@ class ExperimentalDevices(
      * plus one WAV per recording entry that has audio. Audio export per entry is
      * best-effort — an un-uploaded or missing file is skipped, not fatal.
      */
-    suspend fun exportRecentRecordings(limit: Int = 10): List<DocumentAttachment> = withContext(Dispatchers.IO) {
+    override suspend fun exportRecentRecordings(limit: Int): List<DocumentAttachment> = withContext(Dispatchers.IO) {
         val logger = co.touchlab.kermit.Logger.withTag("ExperimentalDevices")
         val recordings = recordingRepository.getRecentRecordings(limit)
         if (recordings.isEmpty()) return@withContext emptyList()
@@ -287,7 +300,28 @@ class ExperimentalDevices(
         attachments
     }
 
-    fun debugSummary(): String {
+    override suspend fun exportTraceSessions(limit: Int): List<DocumentAttachment> {
+        val logger = co.touchlab.kermit.Logger.withTag("ExperimentalDevices")
+        return try {
+            val exporter = KoinPlatform.getKoin().getOrNull<TraceSessionExporter>() ?: return emptyList()
+            val sessions = exporter.exportLastNSessions(limit)
+            if (sessions.isEmpty()) return emptyList()
+            val traceBytes = Json.encodeToString(sessions).encodeToByteArray()
+            listOf(
+                DocumentAttachment(
+                    fileName = "ring_trace_sessions.json",
+                    mimeType = "application/json",
+                    source = Buffer().apply { write(traceBytes) },
+                    size = traceBytes.size.toLong(),
+                )
+            )
+        } catch (e: Exception) {
+            logger.e(e) { "Failed to collect ring trace sessions" }
+            emptyList()
+        }
+    }
+
+    override fun debugSummary(): String {
         return buildString {
             ringSync.lastRingSummary()?.let {
                 append(it)

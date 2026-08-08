@@ -3,7 +3,7 @@ package coredevices.coreapp.util
 import co.touchlab.kermit.LogWriter
 import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
-import coredevices.ExperimentalDevices
+import coredevices.ExperimentalDevicesFacade
 import io.ktor.utils.io.core.append
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +60,7 @@ expect fun generateDeviceSummaryPlatformDetails(): String
 expect fun crashlyticsLog(message: String)
 expect fun crashlyticsRecordException(throwable: Throwable)
 
-fun generateDeviceSummary(experimentalDevices: ExperimentalDevices): String {
+fun generateDeviceSummary(experimentalDevices: ExperimentalDevicesFacade): String {
     val deviceSummary = generateDeviceSummaryPlatformDetails()
     val experimentalSummary = experimentalDevices.debugSummary()
     return deviceSummary + "\n" + (experimentalSummary ?: "")
