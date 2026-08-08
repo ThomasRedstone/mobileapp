@@ -16,12 +16,17 @@ import coredevices.util.auth.AppleAuthUtil
 import coredevices.util.auth.GitHubAuthUtil
 import coredevices.util.auth.GoogleAuthUtil
 import coredevices.util.auth.SilentSignIn
+import PlatformUiContext
+import coredevices.coreapp.util.AppUpdate
+import coredevices.coreapp.util.AppUpdateState
 import coredevices.libindex.LibIndex
 import coredevices.util.integrations.OAuthLauncher
 import coredevices.util.models.ModelDownloadManager
 import coredevices.util.transcription.CactusModelPathProvider
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
+import coredevices.coreapp.util.AppUpdatePlatformContent
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -52,6 +57,13 @@ val desktopModule = module {
     single<AnalyticsBackend> { DesktopAnalytics }
     singleOf(::ModelDownloadManager)
     single<LibIndex> { NoOpLibIndex }
+    // Updates are handled by the system package manager on desktop Linux, not in-app.
+    single<AppUpdate> {
+        object : AppUpdate {
+            override val updateAvailable = MutableStateFlow<AppUpdateState>(AppUpdateState.NoUpdateAvailable)
+            override fun startUpdateFlow(uiContext: PlatformUiContext, update: AppUpdatePlatformContent) {}
+        }
+    }
     // No local Cactus STT/LM model support on desktop yet (see docs/ubuntu-touch-poc-plan.md).
     // A binding is still needed: several commonMain call sites do a plain get() rather than
     // getOrNull(), which would otherwise throw NoDefinitionFoundException during composition.
