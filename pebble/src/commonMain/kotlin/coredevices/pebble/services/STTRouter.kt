@@ -1,8 +1,7 @@
 package coredevices.pebble.services
 
 import co.touchlab.kermit.Logger
-import coredevices.speex.SpeexCodec
-import coredevices.speex.SpeexDecodeResult
+import coredevices.pebble.audio.createSpeexFrameDecoder
 import coredevices.util.CoreConfigFlow
 import coredevices.util.models.CactusSTTMode
 import coredevices.util.transcription.CactusTranscriptionService
@@ -134,18 +133,17 @@ class STTRouter(
         encoderInfo: VoiceEncoderInfo.Speex,
         frames: List<UByteArray>,
     ): ByteArray {
-        val speex = SpeexCodec(
+        val speex = createSpeexFrameDecoder(
             sampleRate = encoderInfo.sampleRate,
             bitRate = encoderInfo.bitRate,
             frameSize = encoderInfo.frameSize,
-        )
+        ) ?: error("Speex decoding not supported on this platform")
         val pcm = ByteArray(encoderInfo.frameSize * Short.SIZE_BYTES)
         val output = ArrayList<Byte>(frames.size * pcm.size)
         withContext(Dispatchers.IO) {
             for (frame in frames) {
-                val result = speex.decodeFrame(frame.asByteArray(), pcm, hasHeaderByte = true)
-                if (result != SpeexDecodeResult.Success) {
-                    error("Failed to decode Speex frame: $result")
+                if (!speex.decodeFrame(frame.asByteArray(), pcm, hasHeaderByte = true)) {
+                    error("Failed to decode Speex frame")
                 }
                 for (b in pcm) output.add(b)
             }

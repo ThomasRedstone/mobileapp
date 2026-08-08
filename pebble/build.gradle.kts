@@ -109,7 +109,6 @@ kotlin {
                 api(libs.uri)
                 implementation(libs.firebase.auth)
                 implementation(libs.firebase.firestore)
-                implementation(libs.coredevices.speex)
                 api(project(":cactus"))
                 api(libs.algolia)
                 implementation(libs.reorderable)
@@ -137,6 +136,7 @@ kotlin {
                 implementation(libs.firebase.crashlytics)
                 implementation(libs.compass.geocoder.mobile)
                 implementation(libs.compass.autocomplete.mobile)
+                implementation(libs.coredevices.speex)
             }
         }
 
