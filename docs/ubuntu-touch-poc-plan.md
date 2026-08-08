@@ -41,10 +41,26 @@ before spending anything on a QML rewrite.
   but is **not** confirmation on real Halium hardware — the emulated run uses Konan's own
   sysroot, not Ubuntu Touch's actual userland/libc. Still needs a real-device run before this
   spike can be called a clean pass.
-- **Spikes 2–4 — blocked.** BlueZ D-Bus access, Compose Desktop over Xwayland in Libertine, and
-  touch input all require a physical Ubuntu Touch device (or at minimum a Halium/UT emulator
-  image), which this environment doesn't have. No further Phase 0 progress is possible without
-  that access.
+- **Spike 3 (Compose Desktop over X11) — partial signal, promising.** Under Xvfb (real X11, no
+  Libertine/Xwayland/touch hardware involved), Skiko's native libraries load and the app runs to
+  a clean exit with no crash (`ubuntu-touch-poc/ui-client-spike`). GL context creation fails and
+  falls back gracefully — expected given this sandbox has no GPU, not informative about a real
+  device's GPU driver. Pixel-level proof of correct rendering was **not** obtained:
+  `window.paint()`-based capture returned a blank frame, and `Robot`-based screen capture hung
+  (this Xvfb build lacks the XTest extension). So: the rendering stack initializes and doesn't
+  crash on X11, but visual correctness is unverified, and Xwayland-in-Libertine specifics plus
+  touch input are entirely untested by this proxy.
+- **Spike 2 (BlueZ D-Bus) — blocked, no useful proxy available.** This sandbox has no system
+  D-Bus, no `dbus-python`/`gi` bindings, and no practical way to host a mock `org.bluez` service
+  without effort disproportionate to the signal it would produce — a stub service wouldn't tell
+  us anything about BlueZ's real object paths, permissions, or AppArmor behavior on-device
+  anyway. Needs real hardware.
+- **Spike 4 (touch input via Xwayland) — blocked, no proxy possible.** Touch input translation
+  can only be observed on physical touch hardware; there is nothing to substitute for it here.
+  Needs real hardware.
+
+No further Phase 0 progress is possible in this environment without physical Ubuntu Touch
+hardware (or at minimum a Halium/UT emulator image).
 
 ## Phases
 
