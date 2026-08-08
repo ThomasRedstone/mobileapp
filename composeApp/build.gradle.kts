@@ -289,9 +289,10 @@ configurations.matching { it.name.contains("desktopRuntimeClasspath") }.configur
     exclude(group = "dev.datlag", module = "kcef")
 }
 
-// JavaExec-family tasks (desktopRun, hotRunDesktop, ...) don't inherit the invoking shell's
-// environment by default - AWT needs a real $DISPLAY to open a window over Xwayland.
-tasks.withType<JavaExec>().configureEach {
+// desktopRun/hotRunDesktop are KotlinJvmRun tasks (not plain JavaExec - tasks.withType<JavaExec>
+// silently matches nothing here) and don't inherit the invoking shell's environment by default.
+// AWT needs a real $DISPLAY to open a window over Xwayland.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.jvm.tasks.KotlinJvmRun>().configureEach {
     System.getenv("DISPLAY")?.let { environment("DISPLAY", it) }
 }
 
