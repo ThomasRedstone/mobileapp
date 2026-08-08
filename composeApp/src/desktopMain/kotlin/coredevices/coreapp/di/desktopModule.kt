@@ -16,6 +16,7 @@ import coredevices.util.auth.AppleAuthUtil
 import coredevices.util.auth.GitHubAuthUtil
 import coredevices.util.auth.GoogleAuthUtil
 import coredevices.util.auth.SilentSignIn
+import coredevices.libindex.LibIndex
 import coredevices.util.integrations.OAuthLauncher
 import coredevices.util.models.ModelDownloadManager
 import coredevices.util.transcription.CactusModelPathProvider
@@ -50,6 +51,7 @@ val desktopModule = module {
     single { RequiredPermissions(flowOf(emptySet())) }
     single<AnalyticsBackend> { DesktopAnalytics }
     singleOf(::ModelDownloadManager)
+    single<LibIndex> { NoOpLibIndex }
     // No local Cactus STT/LM model support on desktop yet (see docs/ubuntu-touch-poc-plan.md).
     // A binding is still needed: several commonMain call sites do a plain get() rather than
     // getOrNull(), which would otherwise throw NoDefinitionFoundException during composition.

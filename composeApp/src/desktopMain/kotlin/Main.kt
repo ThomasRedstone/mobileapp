@@ -1,7 +1,9 @@
 package coredevices.coreapp
 
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import coredevices.ExperimentalDevicesFacade
 import coredevices.NoOpExperimentalDevicesFacade
 import coredevices.coreapp.di.apiModule
@@ -28,7 +30,10 @@ fun main() {
     initLogging()
 
     application {
-        Window(onCloseRequest = ::exitApplication, title = "Core") {
+        // No explicit size defaults to a small fixed window (800x600) regardless of the real
+        // display - maximized fills the actual Xwayland surface on the phone screen instead.
+        val windowState = rememberWindowState(placement = WindowPlacement.Maximized)
+        Window(onCloseRequest = ::exitApplication, title = "Core", state = windowState) {
             App()
         }
     }
