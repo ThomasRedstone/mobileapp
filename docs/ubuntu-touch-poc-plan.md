@@ -285,6 +285,25 @@ evidence. So the original diagnosis (USC permanently holding DRM master with no 
 handoff mechanism in this QEMU config) stands as the actual, sole remaining blocker, now with
 every plausible alternative genuinely tested and eliminated rather than assumed.
 
+**Checked whether the VT/session-association side was fixable from inside the guest, without
+host GPU passthrough — it isn't.** `loginctl session-status` on our own diagnostic shell showed
+every SSH-originated session is `Type: tty`, `Service: sshd`, with no seat/VT assignment at
+all — structurally incapable of ever claiming a VT, by design, regardless of configuration.
+Checked the one remaining vantage point available on this VM that isn't SSH: connected directly
+to the QEMU serial console (a genuinely unused tool in this specific investigation, not a repeat)
+and found it's a plain serial-port (`ttyS0`) getty, an entirely different device from the `tty1`
+console Mir's VT-switching logic actually targets — orthogonal to the DRM/VT question, not a way
+to observe or influence it.
+
+**This exhausts what's resolvable from inside the guest.** Every software-level avenue
+accessible from an unprivileged-to-root SSH session or the serial console has been tried:
+environment variables (four separate, specific hypotheses), the correct legacy Mir option
+(genuinely worked, ruled out the alternate platform decisively), permission fixes via root,
+`strace`-level tracing, and now direct console access. What's left is a real host-level or
+virtualization-level change — GPU passthrough (declined without explicit permission, since it
+risks other VMs sharing this host) or a fundamentally different virtualization/hardware setup.
+This is the genuine edge of this session's Phase 0 work on Spike 3.
+
 ## Phases
 
 ### Phase 0 — Spikes (go/no-go gates)
