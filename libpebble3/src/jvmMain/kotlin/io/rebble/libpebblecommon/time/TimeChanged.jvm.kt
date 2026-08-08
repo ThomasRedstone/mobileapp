@@ -2,6 +2,9 @@ package io.rebble.libpebblecommon.time
 
 import io.rebble.libpebblecommon.connection.AppContext
 
-actual fun createTimeChanged(appContext: AppContext): TimeChanged {
-    TODO("Not yet implemented")
+// No portable JVM API for OS time/timezone-change notifications (see docs/ubuntu-touch-poc-plan.md).
+object LinuxTimeChanged : TimeChanged {
+    override fun registerForTimeChanges(onChanged: () -> Unit) {}
 }
+
+actual fun createTimeChanged(appContext: AppContext): TimeChanged = LinuxTimeChanged
