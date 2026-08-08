@@ -32,6 +32,20 @@ before spending anything on a QML rewrite.
    service only over D-Bus (no shared process/state).
 3. *(Later, if the PoC succeeds)* an OpenStore-facing packaging/listing wrapper.
 
+## Progress log
+
+- **Spike 1 (K/N linux toolchain) — partially verified, promising.** `linuxX64` builds/links/runs
+  natively on the dev host. `linuxArm64` cross-compiles, links, and runs correctly under
+  `qemu-aarch64` emulation against Konan's bundled glibc 2.25 sysroot (see
+  `ubuntu-touch-poc/core-service-spike`). This de-risks the toolchain question significantly,
+  but is **not** confirmation on real Halium hardware — the emulated run uses Konan's own
+  sysroot, not Ubuntu Touch's actual userland/libc. Still needs a real-device run before this
+  spike can be called a clean pass.
+- **Spikes 2–4 — blocked.** BlueZ D-Bus access, Compose Desktop over Xwayland in Libertine, and
+  touch input all require a physical Ubuntu Touch device (or at minimum a Halium/UT emulator
+  image), which this environment doesn't have. No further Phase 0 progress is possible without
+  that access.
+
 ## Phases
 
 ### Phase 0 — Spikes (go/no-go gates)
