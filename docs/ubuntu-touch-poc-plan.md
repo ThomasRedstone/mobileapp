@@ -452,19 +452,55 @@ following stubs are now real implementations rather than `TODO()`:
   BT Classic variants intentionally left returning `false`/empty, matching
   `BlePlatformConfig.supportsBtClassic = false` for this platform.
 
-**Not done, and harder than the above:** `KableGattClient.jvm.kt` (the GATT *client* side — us
-connecting outward to the watch's own GATT services, e.g. writing the pairing-trigger
-characteristic, subscribing to the connectivity characteristic). Unlike the scanner and server,
-every call site (`PebbleBle.kt`, `ConnectivityWatcher.kt`, `PebblePairing.kt`) is written directly
-against Kable's own `com.juul.kable.Peripheral` — a concrete class, not an interface, with no
-Linux backend to construct one from. Reusing the `LinuxBleScanner`/`GattServer.jvm.kt` trick
-(bypass Kable entirely) here would mean either forking `Peripheral` or refactoring those three
-commonMain files off the concrete Kable type — real scope, not a port. Real hardware in this
-session only proved the *server* role (phone hosting forward-PPoG for the watch to write into);
-the *client* role remains unverified. This is the next real blocker for Phase 2, ahead of Phase 3
-(DI wiring — `LibPebbleModule.jvm.kt` is still `TODO()`, needs a minimal `platformModule` scoped to
-what BLE connect actually needs, not the full Android module's calendar/notifications/contacts
-surface) and Phase 4 (real UI).
+**Correction — `KableGattClient.jvm.kt` doesn't need a from-scratch D-Bus client after all.**
+Decompiling the real `kable-core-jvm-0.43.1.jar` (already fetched earlier this session for
+`ManufacturerData`) turned up `com/juul/kable/btleplug/*` — Kable's JVM target has a genuine
+backend, [btleplug](https://github.com/deviceplug/btleplug) (a Rust BLE library, wired in via
+`kable-btleplug-ffi`), not just Android/iOS. `kable-btleplug-ffi-0.43.1.jar` bundles native libs
+for `linux-aarch64`, `linux-x86-64`, `darwin-*`, and `win32-x86-64` — `linux-aarch64` matches the
+real Fairphone 4 exactly. This means `KableGattConnector`/`KableConnectedGattClient` in
+commonMain's `KableGattClient.kt` — the exact same client code Android and iOS already use — work
+unmodified on JVM; only the platform factory function differs. Implemented:
+
+- **`KableGattClient.jvm.kt`** (real implementation) — `peripheralFromIdentifier` builds a real
+  `Peripheral` via `Peripheral(identifier.asString.toIdentifier()) {}`, using Kable's own
+  `String.toIdentifier()` (backed by `PeripheralId(String)` in the ffi jar). `requestMtuNative`
+  returns `mtu` unchanged (JVM's `BtleplugPeripheral` has no Android-style `requestMtu` — MTU is
+  read via the already-platform-generic `maximumWriteValueLengthForType`, no client change
+  needed) and `refreshServicesNative` returns `false` (no cache-refresh equivalent, matching the
+  iOS stub).
+
+Real caveat, called out in-code: every other jvmMain BLE file (`LinuxBleScanner`,
+`GattServer.jvm.kt`, `Pairing.jvm.kt`) identifies devices by a colon-separated MAC address
+obtained from real `busctl`/BlueZ output, proven live against the watch tonight.
+`identifier.asString.toIdentifier()` reconstructing a btleplug `Identifier` from that *same*
+string format — rather than from a live scan `Advertisement`, which is the only path proven by
+btleplug's own test suite — is a reasonable bet (btleplug's Linux/BlueZ backend addresses
+peripherals the same way) but hasn't been exercised against real hardware. `LinuxBleScanner`
+(scan) and the `dbus-python` companion (server) are kept as-is rather than also switched to
+btleplug: both are already proven live tonight against the real watch, and rewriting proven code
+to chase consistency with an unverified new path isn't a trade worth making yet. If
+`peripheralFromIdentifier` turns out not to work on real hardware, the fallback is scanning with
+Kable's own real `Scanner` (`createKableAdvertisementsFlow`, still `TODO()`) instead of
+`LinuxBleScanner`, since that path — construct-`Peripheral`-from-`Advertisement` — is the one
+btleplug's own examples actually exercise.
+
+**Phase 3 (DI wiring) done, minimally.** `LibPebbleModule.jvm.kt` is a real `platformModule` now,
+not `TODO()`. Phone-integration interfaces required by the shared Koin graph (calendar, calls,
+contacts, music, geolocation, notification-listener/sync) have no meaningful equivalent on a
+desktop JVM target — this platform's whole point is the BLE connection, not replicating
+Android/iOS's OS integrations — so `LinuxPlatformServices.kt` (new) provides honest no-op
+implementations of each (return empty/no-permission/false rather than throw) instead of the full
+surface Android's module wires up. `BlePlatformConfig` set with `supportsBtClassic = false` and
+`supportsGattAutoConnect = false` (busctl/dbus-python drive BlueZ directly, not through an OS BLE
+stack with its own autoConnect semantics). One known gap: the commonMain `scope<ConnectionScope>`
+block's classic-BT binding (`BtClassicConnector`) isn't provided on this platform at all — fine as
+long as nothing ever tries to connect a `PebbleBtClassicIdentifier`, which `supportsBtClassic =
+false` should guarantee, but unverified against real hardware.
+
+Remaining: Phase 4 (real UI) — confirm/add the JVM desktop Compose target, build on-device via
+Gradle, bundle a JRE in the Libertine container — then Phase 5 (the `lomiri-app-launch` crash) and
+Phase 6 (distribution, deferred).
 
 ## Phases
 
