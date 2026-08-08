@@ -8,7 +8,11 @@ import io.rebble.libpebblecommon.connection.PebbleBleIdentifier
 import io.rebble.libpebblecommon.connection.bt.ble.transport.BleScanner
 import kotlinx.coroutines.flow.Flow
 
-actual fun kableBleScanner(bleConfigFlow: BleConfigFlow): BleScanner = TODO("Not yet implemented")
+// Kable has no Linux backend, so this doesn't construct a KableBleScanner —
+// LinuxBleScanner talks to BlueZ directly via busctl. createKableAdvertisementsFlow
+// and Identifier.asPebbleBleIdentifier below exist only to satisfy the expect/actual
+// contract; they're Kable-specific and unreachable from LinuxBleScanner.
+actual fun kableBleScanner(bleConfigFlow: BleConfigFlow): BleScanner = LinuxBleScanner(bleConfigFlow)
 
 internal actual fun createKableAdvertisementsFlow(bleConfig: BleConfig): Flow<Advertisement> = TODO("Not yet implemented")
 

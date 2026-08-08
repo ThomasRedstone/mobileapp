@@ -413,6 +413,59 @@ protocol parsing above the raw bytes (PPoG framing, the real request/response pr
 already fully implemented in `commonMain` (`PPoGStream`, etc.) and needs no platform-specific
 work at all.
 
+## Beyond Phase 0, continued: porting proven logic into real `jvmMain` actuals
+
+Following the roadmap's Phase 1/2 (JVM D-Bus library, port proven logic into `jvmMain`), the
+following stubs are now real implementations rather than `TODO()`:
+
+- **`BusctlDbus.jvm.kt`** (new) — small `ProcessBuilder`-over-`busctl` helper plus a plain-text
+  `GetManagedObjects` parser (`BluezObjectParser`), replacing the one-off Java/Python prototypes
+  from `/tmp/blescan/` on the real device with a permanent, reusable implementation. Chose
+  `busctl` over fixing `dbus-java`'s SASL bug or writing a full D-Bus binding — pragmatic given
+  the session's time budget, and it's the one approach proven reliable all session. Caveat carried
+  over faithfully: `busctl` can only *call* methods on other services, it can't *export* object
+  paths of its own — see GattServer below.
+- **`KableBleScanner.jvm.kt` / `LinuxBleScanner.jvm.kt`** (new) — `kableBleScanner()` no longer
+  constructs the commonMain `KableBleScanner` class (which needs Kable's own `Advertisement` type,
+  and Kable has no Linux backend). Instead it returns a new `LinuxBleScanner` implementing
+  `BleScanner` directly: `StartDiscovery` + polled `GetManagedObjects`, parsed into `BleScanResult`
+  via `BluezObjectParser`. `createKableAdvertisementsFlow`/`Identifier.asPebbleBleIdentifier`
+  remain `TODO()` — they're only ever called from within `KableBleScanner`, which this path never
+  instantiates.
+- **`GattServer.jvm.kt`** (real implementation) — `busctl` can't host a GATT server (client-only),
+  and `dbus-java`'s auth bug ruled it out too, so this spawns a persistent Python companion process
+  (`gatt_server_companion.py`, bundled as a jvmMain resource, extracted to a temp file at runtime)
+  speaking `dbus-python` to BlueZ, talking to it over stdin/stdout line-delimited JSON. The
+  companion's service/characteristic structure is the exact proven-tonight prototype (PPoG service
+  + meta characteristic + fake decoy service, `Descriptors` key included, correct
+  `write-without-response` flag) moved into the codebase verbatim rather than re-derived. Known
+  limitation, called out in-code: BlueZ's `PropertiesChanged`-based notify has no per-send
+  completion callback reaching us, so `sendData()` can't distinguish "sent" from "actually
+  delivered" the way Android's `notifyCharacteristicChanged` + timeout tracking does — that
+  send-direction path (server → watch) is unverified against real hardware, unlike the
+  receive-direction path (watch → server) proven above.
+- **`PebbleBle.jvm.kt`** — real `SERVER_META_RESPONSE` byte value (was `TODO()`), copied from the
+  Android actual.
+- **`Pairing.jvm.kt`** — real `isBonded`/`createBond`/`getBluetoothDevicePairEvents` for BLE, via
+  `Device1.Pair()` and polling `Device1.Paired` (no D-Bus signal subscription available from
+  `busctl`, so this polls rather than pushes — fine for a bond handshake, not latency-sensitive).
+  BT Classic variants intentionally left returning `false`/empty, matching
+  `BlePlatformConfig.supportsBtClassic = false` for this platform.
+
+**Not done, and harder than the above:** `KableGattClient.jvm.kt` (the GATT *client* side — us
+connecting outward to the watch's own GATT services, e.g. writing the pairing-trigger
+characteristic, subscribing to the connectivity characteristic). Unlike the scanner and server,
+every call site (`PebbleBle.kt`, `ConnectivityWatcher.kt`, `PebblePairing.kt`) is written directly
+against Kable's own `com.juul.kable.Peripheral` — a concrete class, not an interface, with no
+Linux backend to construct one from. Reusing the `LinuxBleScanner`/`GattServer.jvm.kt` trick
+(bypass Kable entirely) here would mean either forking `Peripheral` or refactoring those three
+commonMain files off the concrete Kable type — real scope, not a port. Real hardware in this
+session only proved the *server* role (phone hosting forward-PPoG for the watch to write into);
+the *client* role remains unverified. This is the next real blocker for Phase 2, ahead of Phase 3
+(DI wiring — `LibPebbleModule.jvm.kt` is still `TODO()`, needs a minimal `platformModule` scoped to
+what BLE connect actually needs, not the full Android module's calendar/notifications/contacts
+surface) and Phase 4 (real UI).
+
 ## Phases
 
 ### Phase 0 — Spikes (go/no-go gates)
