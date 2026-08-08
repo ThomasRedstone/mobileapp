@@ -77,8 +77,84 @@ before spending anything on a QML rewrite.
   this could not be isolated further without a window manager (see spike 3). Real device
   confirmation needed either way; there is no substitute here for actual touch hardware.
 
-No further Phase 0 progress is possible in this environment without physical Ubuntu Touch
-hardware (or at minimum a Halium/UT emulator image with a real compositor).
+**2026-08-08, later — real UBports QEMU VM access unblocked everything above.** The user
+pointed at `~/own/ut/` (a separate engineering knowledge base) and specifically
+`ut-testing-confined-apps.md` §3, which documents booting UBports' published generic-amd64
+rootfs under plain `qemu-system-x86_64` — a real Lomiri session, real confinement, a real
+session bus, no phone required. A sibling investigation (`ut-flutter-embedder.md`, a Flutter
+embedder spike in the same workspace) had already independently gone through this exact process
+for the same underlying question and left a **live, currently-running VM** on this host
+(`ubuntu-touch-pdk-img-amd64.raw`, Ubuntu 26.04/"resolute", real Lomiri stack, SSH reachable via
+`hostfwd tcp::2222`). Connected read-only to avoid disturbing their in-progress work, and got
+real signal no sandbox proxy could produce:
+
+- **Spike 2 (BlueZ D-Bus) — genuinely confirmed, not proxied.** `bluetooth.service` is active,
+  `org.bluez` owns its name on the real system bus, and `busctl --system call org.bluez /
+  org.freedesktop.DBus.ObjectManager GetManagedObjects` succeeds as the unconfined `phablet`
+  user with no special grant needed. No adapter object appears in the result — expected, this
+  VM has no Bluetooth hardware passed through — but the D-Bus/permission layer question is now
+  answered for real, not approximated by a stub.
+- **Libertine + Xwayland are real and present on current UT (26.04).** `libertine-container-manager`,
+  `libertine-launch`, `libertined` (the D-Bus service), and `Xwayland` are all installed by
+  default on this image. This directly confirms the plan's core architectural premise — it was
+  previously inferred from documentation, now confirmed on a live system.
+- **The Lomiri session is up and stable** (`loginctl` shows the `phablet` session active, not
+  crash-looping) — the sibling investigation's own fix for an earlier LightDM/EGL-vendor-dispatch
+  bug (force Mesa over libhybris via `__EGL_VENDOR_LIBRARY_FILENAMES`, the same fix
+  `ut-native-services-and-runtimes.md` §4 documents for real device hardware) appears to have
+  worked.
+- **A raw manual Xwayland connection to the compositor socket fails** (`could not connect to
+  wayland server`), independently reproduced with a plain C client (Xwayland itself) after the
+  sibling's Rust client hit the same wall. This is expected, not a finding against the approach:
+  real apps get their Wayland/session environment from `lomiri-app-launch`/the proper
+  Libertine/click launch path, which a raw SSH shell bypasses entirely.
+
+**Real Libertine chroot container — created successfully, past two real Libertine/Python-3.14
+compatibility bugs.** `libertine-container-manager create -t chroot` failed twice with genuine,
+specific errors, not environmental noise:
+
+1. `'etc/alternatives/awk' is a link to an absolute path` — Python 3.14 (this image's default)
+   made `tarfile.extractall()`'s restrictive `'data'` extraction filter (PEP 706) the default,
+   which rejects the ubuntu-base tarball's absolute symlinks. Libertine's code predates this.
+   Fixed **without touching any system file**: a wrapper script that sets
+   `tarfile.TarFile.extraction_filter = staticmethod(tarfile.fully_trusted_filter)` before
+   invoking `libertine-container-manager`'s own `main()` via `runpy`.
+2. `Unable to locate package maliit-inputcontext-gtk2` — this package no longer exists in the
+   resolute/26.04 repos (GTK2 input-method support has been dropped upstream); Libertine
+   hardcodes it in `BaseContainer.default_packages` (`Libertine.py`). Fixed the same
+   non-invasive way: monkeypatch `BaseContainer.__init__` to strip that one entry after the
+   real `__init__` runs, then re-run.
+
+With both patched, container creation completed end-to-end (~5 minutes, matching
+`ut-testing-confined-apps.md`'s own cost table) and `libertine-container-manager list` shows the
+container registered. Installed `x11-apps` (`xeyes`/`xclock`/`xterm`) into it via
+`install-package` — succeeded cleanly, confirming the container's package management works, not
+just its creation.
+
+**Direct app launch — real, specific failure, not a dead end.** `libertine-launch -i x11poc
+xclock` returns `Error: Can't open display:` immediately. Root-caused rather than assumed:
+`/tmp/.X11-unix` is empty and no `Xwayland` process is running for this session at all — nothing
+spins one up on demand from a bare SSH shell. This matches the sibling investigation's own
+finding for their Flutter embedder (raw SSH bypasses the real Wayland/session environment that
+only `lomiri-app-launch` sets up) — the same root cause, now independently confirmed via a
+completely different toolkit (Libertine/X11, not Flutter/Wayland).
+
+**New, useful side-finding for the sibling investigation too**: `systemctl --user status
+maliit-server` shows it crash-looping with `qt.qpa.wayland: Failed to initialize EGL display
+3001` — the *exact* EGL/glvnd-dispatch failure signature the sibling diagnosed and fixed for
+`lomiri-full-greeter.service` via a `__EGL_VENDOR_LIBRARY_FILENAMES` systemd drop-in. This
+strongly suggests their fix needs to be applied to more services than just the greeter
+(`maliit-server.service` at minimum) before app launch — including a Compose/X11 client's own
+process, if it needs its own EGL context — will work. Worth relaying back to that investigation.
+
+**Where this leaves Phase 0**: spikes 1 and 2 are now genuinely confirmed on real
+infrastructure, not proxied. Spike 3's remaining open question narrowed from "does
+Compose-over-Xwayland-in-Libertine even work at all" to a specific, addressable one: get an
+Xwayland instance running for the session (either via the proper
+`lomiri-app-launch`/click-install path, matching what the sibling investigation is actively
+pursuing, or by extending the EGL/glvnd systemd-drop-in fix to whatever's supposed to start it).
+Spike 4 (touch input) still has no substitute for physical hardware and remains genuinely
+untestable here.
 
 ## Phases
 
