@@ -275,6 +275,15 @@ compose.desktop {
     }
 }
 
+// :pebble's compose-webview-multiplatform dependency pulls in an embedded Chromium (JCEF) on
+// desktop, which needs org.jogamp's native OpenGL bindings from a Maven repo we don't configure
+// (see docs/ubuntu-touch-poc-plan.md). Not used by anything App() reaches unconditionally at
+// startup (only specific support/help screens) - excluded from the desktop runtime classpath
+// only, so android/iOS keep the real webview.
+configurations.matching { it.name.contains("desktopRuntimeClasspath") }.configureEach {
+    exclude(group = "dev.datlag", module = "kcef")
+}
+
 compose.resources {
     packageOfResClass = "coreapp.composeapp.generated.resources"
 }
