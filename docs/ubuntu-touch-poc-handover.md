@@ -1,10 +1,20 @@
 # Ubuntu Touch X11/Libertine PoC — Handover
 
-Status as of this handover: **Spikes 1 and 2 done. Spike 3 root-caused down to one specific,
-named blocker. Spike 4 untouched (needs physical hardware).** This document exists because the
-working session got very long; read this instead of the full history in
-`docs/ubuntu-touch-poc-plan.md` to get back up to speed quickly. The plan doc has the complete,
-chronological detail if you need it — this is the compressed version.
+Status as of this handover: **Spikes 1, 2, and 3's core question all done — confirmed on real
+hardware, not just a VM.** Spike 4 (touch input) is the only one not yet exercised, and real
+touch-capable hardware now exists and is reachable (see below) — it's a "do it," not a "find
+infrastructure for it" problem now. This document exists because the working session got very
+long; read this instead of the full history in `docs/ubuntu-touch-poc-plan.md` to get back up to
+speed quickly. The plan doc has the complete, chronological detail if you need it — this is the
+compressed version.
+
+**Real hardware access exists**: `ssh 100.87.156.48` (Tailscale IP) reaches a real, physical
+Ubuntu Touch phone (arm64, UT 24.04, real `himax-touchscreen`, user's own daily-driver device —
+it has a real `main` Libertine container with the user's own real apps already installed;
+treat it accordingly, don't touch `main`). No root/sudo password known on this device. This
+access resolved the VM-only DRM/VT blocker below by sidestepping it entirely — confirmed the
+QEMU-based investigation's diagnosis was correct: it was a virtualization artifact, not a real
+architectural problem.
 
 ## What this PoC is
 
@@ -19,10 +29,35 @@ about de-risking that plan's Phase 0 spikes, not implementing the real thing yet
   See `ubuntu-touch-poc/core-service-spike/`.
 - **Spike 2 (BlueZ D-Bus) — done, genuinely confirmed on real hardware.** Real `bluetoothd`,
   real `org.bluez` on a real UT VM's system bus, `GetManagedObjects` succeeds unconfined.
-- **Spike 3 (Compose Desktop over Xwayland/Libertine) — root-caused, not resolved.** See below,
-  this is the live blocker.
-- **Spike 4 (touch input) — untouched.** No physical Ubuntu Touch device or touchscreen exists
-  in this environment. Nothing to report here; needs real hardware, full stop.
+- **Spike 3 (X11-app-over-Xwayland/Libertine) — core question answered, on real hardware.** A
+  real `xclock` process, launched through the real `libertine-launch`/`lomiri-app-launch` path,
+  runs stably under a real `Xwayland :0 -rootless` instance inside the phone's live Lomiri
+  session. This is the architecture working, for real, not a proxy or a VM approximation. See
+  "Real-hardware breakthrough" below — the VM-only DRM/VT blocker further down never applied to
+  real hardware at all.
+- **Spike 4 (touch input) — not yet exercised, but now genuinely reachable.** Real touch hardware
+  exists (see above). This just hasn't been done yet in this session — next person/session
+  should just do it, not go looking for infrastructure first.
+
+## Real-hardware breakthrough (read this first, it supersedes most of Spike 3 below)
+
+On the real device (`x11poc-real` container, distinct from the user's own `main`):
+container creation succeeded **with zero of the two VM-specific patches** (this device runs
+Python 3.12, not 3.14, and its UT 24.04 repos still carry `maliit-inputcontext-gtk2`) — both
+earlier "Libertine bugs" were actually just VM/image-generation artifacts. `x11-apps` installed
+cleanly, a `.desktop` entry for `xclock` registered immediately via `list-apps`, and launching
+through the real session's own D-Bus/display environment (pulled live from `systemctl --user
+show-environment`, not guessed) got a real, stable, `bwrap`-sandboxed `xclock` process running
+for 10+ seconds under the session's real `Xwayland :0 -rootless`. `lomiri-app-launch` itself
+still crashed with the same `Lost our connection with the registry` symptom seen on the VM, but
+the launched app survived that crash — a narrower loose end worth chasing before shipping, not a
+blocker for the core feasibility question.
+
+**Bottom line: the architecture works.** Everything below this point (the VM/DRM/VT
+investigation) was real, useful diagnostic work, but its conclusion — GPU passthrough or
+different infrastructure needed — turned out to be specific to QEMU virtualization, not the
+actual UT platform. Don't spend more time on VM DRM/VT debugging unless there's a specific
+reason to still need a VM (e.g. CI, no hardware access) rather than the real device.
 
 ## Spike 3: exactly where it stands
 

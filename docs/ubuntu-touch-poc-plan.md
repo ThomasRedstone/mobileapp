@@ -1,8 +1,10 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: not started. This is an exploratory proof-of-concept, not a committed feature — see
-`CLAUDE.md` platform rules (Android/iOS are the supported targets). Nothing here should be
-read as changing that until the PoC proves itself out.
+Status: **Spike 3 core question answered on real hardware — X11-over-Libertine-Xwayland genuinely
+works under a real Lomiri session.** This is an exploratory proof-of-concept, not a committed
+feature — see `CLAUDE.md` platform rules (Android/iOS are the supported targets). Nothing here
+should be read as changing that until the PoC proves itself out further (touch input, a real
+Compose Desktop app rather than `xclock`, packaging).
 
 ## Goal
 
@@ -302,7 +304,43 @@ environment variables (four separate, specific hypotheses), the correct legacy M
 `strace`-level tracing, and now direct console access. What's left is a real host-level or
 virtualization-level change — GPU passthrough (declined without explicit permission, since it
 risks other VMs sharing this host) or a fundamentally different virtualization/hardware setup.
-This is the genuine edge of this session's Phase 0 work on Spike 3.
+This was the genuine edge of what QEMU could answer — resolved below by moving to real hardware,
+which sidesteps the virtualization-specific DRM/VT problem entirely rather than fixing it.
+
+**2026-08-08, real hardware — Spike 3's core rendering question is answered, on a real device.**
+The user provided SSH access to a real, physical Ubuntu Touch phone (arm64, Halium base, UT
+24.04, real `himax-touchscreen`, real active Lomiri session on seat0 — not a VM). Treated it
+carefully as real personal daily-driver hardware: found an existing `main` Libertine container
+with real apps already installed and left it untouched, created a distinctly-named
+`x11poc-real` container instead, checked disk/battery headroom first.
+
+- **Container creation succeeded outright, no patches needed.** This device runs Python 3.12
+  (not 3.14), so the tarfile extraction-filter bug doesn't apply; its UT 24.04 repos still carry
+  `maliit-inputcontext-gtk2` (unlike the newer resolute/26.04 repos the VM used), so that bug
+  doesn't apply either. Both VM-specific compatibility issues were genuinely VM/image-generation
+  artifacts, not fundamental Libertine problems — confirmed by their absence here. One new, real,
+  minor bug surfaced instead: container creation failed once with `KeyError: 'XDG_RUNTIME_DIR'`
+  when run from a backgrounded SSH shell lacking that variable; setting it explicitly fixed it
+  immediately.
+- **`x11-apps` installed cleanly**, same as on the VM.
+- **A `.desktop` entry for `xclock` registered immediately** via `list-apps`, same mechanism as
+  the VM.
+- **`lomiri-app-launch` needed the real session's live D-Bus/display environment** (pulled from
+  `systemctl --user show-environment` on the actual session, not guessed) — without it, fails
+  fast with a clear `Cannot autolaunch D-Bus without X11 $DISPLAY`. With it: `lomiri-app-launch`
+  itself still crashes with the same `Lost our connection with the registry` seen on the VM —
+  but this time, **the underlying app process survives that crash and keeps running.** Confirmed
+  via `ps aux`: a real `bwrap`-sandboxed `xclock` process, alive and stable for 10+ seconds (not
+  a transient flash), under a **real `Xwayland :0 -rootless` instance that was already part of
+  the live Lomiri session** (running since well before this test, not spawned by it).
+
+**This is the answer Spike 3 was built to get.** X11-apps-via-Libertine-over-Xwayland genuinely
+works under a real, live Lomiri session — the VM investigation's DRM/VT-arbitration blocker was
+confirmed to be exactly what it was diagnosed as: a QEMU/virtualization-specific artifact with no
+equivalent on real hardware, not a fundamental flaw in the architecture. The `lomiri-app-launch`
+tool's own crash is a separate, narrower loose end (worth understanding before shipping, since a
+production app would want a clean launch, not a lucky-survival one) — but it no longer gates the
+core feasibility question the whole PoC exists to answer.
 
 ## Phases
 
