@@ -210,6 +210,9 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.ktor.client.okhttp)
                 implementation(libs.coroutines)
+                // :util depends on :libindex via implementation(), which doesn't leak
+                // transitively - DesktopPlatformServices.kt needs IndexIdentifier directly.
+                implementation(project(":libindex"))
             }
         }
         commonTest.dependencies {
