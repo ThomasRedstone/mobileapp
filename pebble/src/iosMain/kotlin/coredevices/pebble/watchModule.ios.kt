@@ -13,13 +13,14 @@ import coredevices.pebble.actions.PebbleTimelineActions
 import coredevices.pebble.actions.PebbleHealthActions
 import coredevices.pebble.actions.PebbleWatchInfoActions
 import coredevices.pebble.health.mobileHealthModule
+import coredevices.pebble.weather.mobileWeatherModule
 import org.koin.dsl.bind
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
 
 actual val platformWatchModule: Module = module {
-    includes(mobileHealthModule)
+    includes(mobileHealthModule, mobileWeatherModule)
     single<Platform> { Platform.IOS }
     singleOf(::PebbleIosDelegate)
     singleOf(::IosPebbleAppActions) bind PebbleAppActions::class

@@ -62,8 +62,6 @@ import coredevices.pebble.weather.WeatherFetcher
 import coredevices.pebble.weather.YahooWeatherInterceptor
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.auth
-import dev.jordond.compass.geocoder.Geocoder
-import dev.jordond.compass.geocoder.MobileGeocoder
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
@@ -139,7 +137,6 @@ val watchModule = module {
     singleOf(::RealFirestoreLocker) bind FirestoreLocker::class
     singleOf(::RealFirestoreKnownWatchesSync) bind FirestoreKnownWatchesSync::class
     singleOf(::RealAppstoreCache) bind AppstoreCache::class
-    single { MobileGeocoder() } bind Geocoder::class
     single<HealthDataApi> { get<LibPebble>() }
     single { InjectedPKJSHttpInterceptors(
         listOf(

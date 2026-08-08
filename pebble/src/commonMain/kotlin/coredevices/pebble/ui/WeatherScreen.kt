@@ -46,11 +46,10 @@ import co.touchlab.kermit.Logger
 import coredevices.database.WeatherLocationDao
 import coredevices.database.WeatherLocationEntity
 import coredevices.pebble.weather.WeatherFetcher
+import coredevices.pebble.weather.createWeatherAutocomplete
 import coredevices.pebble.weather.usefulName
 import coredevices.ui.M3Dialog
 import dev.jordond.compass.Place
-import dev.jordond.compass.autocomplete.Autocomplete
-import dev.jordond.compass.autocomplete.mobile
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -189,12 +188,12 @@ private fun AddWeatherLocationDialog(
 ) {
     var showFixedLocationSearch by remember { mutableStateOf(!allowCurrentLocation) }
     var addressQuery by remember { mutableStateOf("") }
-    val autoComplete = remember { Autocomplete.mobile() }
+    val autoComplete = remember { createWeatherAutocomplete() }
     var suggestions by remember { mutableStateOf<List<Place>>(emptyList()) }
     var searchFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(addressQuery) {
-        if (addressQuery.length >= 3) {
+        if (addressQuery.length >= 3 && autoComplete != null) {
             delay(300)
             val result = autoComplete.search(addressQuery)
             if (result.isError) {
