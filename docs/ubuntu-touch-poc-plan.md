@@ -50,11 +50,16 @@ before spending anything on a QML rewrite.
   (this Xvfb build lacks the XTest extension). So: the rendering stack initializes and doesn't
   crash on X11, but visual correctness is unverified, and Xwayland-in-Libertine specifics plus
   touch input are entirely untested by this proxy.
-- **Spike 2 (BlueZ D-Bus) — blocked, no useful proxy available.** This sandbox has no system
-  D-Bus, no `dbus-python`/`gi` bindings, and no practical way to host a mock `org.bluez` service
-  without effort disproportionate to the signal it would produce — a stub service wouldn't tell
-  us anything about BlueZ's real object paths, permissions, or AppArmor behavior on-device
-  anyway. Needs real hardware.
+- **Spike 2 (BlueZ D-Bus) — partial signal via proxy.** Built a private-session-bus stub
+  imitating BlueZ's shape (`ObjectManager.GetManagedObjects`, `Adapter1.StartDiscovery`) and a
+  client calling it the way a real `libpebble3` actual would — see
+  `ubuntu-touch-poc/dbus-bluez-proxy-spike`. Full round trip succeeds: object discovery,
+  introspection, and method dispatch all confirmed server-side. This proves D-Bus IPC transport
+  and dispatch work mechanically in this environment. It does **not** prove anything about real
+  BlueZ: this is a session-bus stub, not the system-bus service with real adapter/pairing/GATT
+  behavior and AppArmor confinement, and the eventual implementation is Kotlin/Native (via
+  `libdbus` cinterop), not Python — that binding is still unwritten. Needs real hardware for a
+  genuine pass.
 - **Spike 4 (touch input via Xwayland) — blocked, no proxy possible.** Touch input translation
   can only be observed on physical touch hardware; there is nothing to substitute for it here.
   Needs real hardware.
