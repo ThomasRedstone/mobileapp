@@ -259,20 +259,31 @@ only the underlying Lomiri display server, on this specific image generation und
 Spike 4 (touch input) still has no substitute for physical hardware and remains genuinely
 untestable here.
 
-**One further lever tried: `MIR_SERVER_PLATFORM_DISPLAY_LIBS`, inconclusive.** Mir's platform
-auto-probe log shows it found `mir:wayland` as an available driver (`Support priority: 0`, tied
-with the failing `mesa-kms`) but didn't select it. Mir supports forcing a specific platform via
-`MIR_SERVER_PLATFORM_DISPLAY_LIBS` instead of relying on auto-probe — a genuine, previously
-untried lever, not a repeat of the earlier three. Tried three plausible value formats
-(`mir:wayland`, the literal module filename `graphics-wayland.so.16`, and the bare name
-`wayland`); each produced a generic `unrecognised option` failure at a different point in
-startup. Also confirmed via `lomiri-systemd-wrapper`'s own source that it unconditionally
-overwrites `MIR_SERVER_FILE` to `$XDG_RUNTIME_DIR/mir_socket` regardless of what's passed in —
-reconfirming Lomiri really is designed to open its *own* new socket, not connect to USC's,
-which supports the standalone-server reading over the nested-client one. This is a real,
-recorded fourth data point, not a clean fix or a clean disproof — resolving it needs Mir's
-actual documentation or source for the expected value format, which wasn't available to look up
-further in this session.
+**Resolved, decisively: the nested-Wayland path is architecturally incompatible, not just
+untried.** `MIR_SERVER_PLATFORM_DISPLAY_LIBS` (modern Mir naming) produced only a generic
+`unrecognised option` — looked it up rather than kept guessing: this UT image bundles Mir
+**1.8.2**, an old version predating that option; its equivalent is the singular
+`MIR_SERVER_PLATFORM_GRAPHICS_LIB` (confirmed via `mir_demo_server`'s manpage, which documents
+the older single-library CLI/env-var convention this version actually uses). With the correct
+variable name and the real module path
+(`MIR_SERVER_PLATFORM_GRAPHICS_LIB=/usr/lib/x86_64-linux-gnu/mir1/server-platform/graphics-wayland.so.16`),
+Mir genuinely selected `mir:wayland` and **got past the DRM/platform-selection failure
+entirely** — real, confirmed forward progress, not a repeat of the earlier three disproved
+levers. It then failed at connecting to the actual Wayland socket; `strace`d the real `connect()`
+syscall (available with root, no more guessing at candidate paths) and found a plain `EACCES` on
+`/run/wayland-syscomp` (root-owned, not world-writable). Loosening that permission
+diagnostically (reverted after) got past the connection entirely too — and surfaced the true,
+final, architectural blocker: `Mir fatal error: wayland platform does not support mirclient`.
+`lomiri-systemd-wrapper` unconditionally sets `MIR_SERVER_ENABLE_MIRCLIENT=1` (legacy UT apps
+need it), and Mir 1.8.2's `wayland` (nested-client) platform cannot provide `mirclient` support
+at the same time — a hard, version-level incompatibility, not a missing flag or permission.
+
+**This closes the question cleanly**: on this Mir/wrapper combination, the standalone
+`mesa-kms`-with-real-DRM-access path is the *only* viable one for `lomiri-full-greeter` — the
+nested-Wayland alternative isn't merely difficult to configure, it's ruled out by direct
+evidence. So the original diagnosis (USC permanently holding DRM master with no VT-switching
+handoff mechanism in this QEMU config) stands as the actual, sole remaining blocker, now with
+every plausible alternative genuinely tested and eliminated rather than assumed.
 
 ## Phases
 
