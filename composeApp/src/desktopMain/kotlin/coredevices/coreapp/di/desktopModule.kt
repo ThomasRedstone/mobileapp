@@ -18,6 +18,7 @@ import coredevices.util.auth.GoogleAuthUtil
 import coredevices.util.auth.SilentSignIn
 import coredevices.util.integrations.OAuthLauncher
 import coredevices.util.models.ModelDownloadManager
+import coredevices.util.transcription.CactusModelPathProvider
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.flow.flowOf
@@ -49,4 +50,19 @@ val desktopModule = module {
     single { RequiredPermissions(flowOf(emptySet())) }
     single<AnalyticsBackend> { DesktopAnalytics }
     singleOf(::ModelDownloadManager)
+    // No local Cactus STT/LM model support on desktop yet (see docs/ubuntu-touch-poc-plan.md).
+    // A binding is still needed: several commonMain call sites do a plain get() rather than
+    // getOrNull(), which would otherwise throw NoDefinitionFoundException during composition.
+    single<CactusModelPathProvider> {
+        object : CactusModelPathProvider {
+            override suspend fun getSTTModelPath(): String = throw IllegalStateException("Cactus models not supported on desktop")
+            override suspend fun getLMModelPath(): String = throw IllegalStateException("Cactus models not supported on desktop")
+            override fun isModelDownloaded(modelName: String): Boolean = false
+            override fun getDownloadedModels(): List<String> = emptyList()
+            override fun getIncompatibleModels(): List<String> = emptyList()
+            override fun deleteModel(modelName: String) {}
+            override fun getModelSizeBytes(modelName: String): Long = 0L
+            override fun initTelemetry() {}
+        }
+    }
 }
