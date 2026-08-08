@@ -184,6 +184,14 @@ afterEvaluate {
         dependsOn("kspCommonMainKotlinMetadata")
     }
 
+    // Room's KSP-generated actual for jvm fails expect/actual matching against
+    // Database.kt's `expect object DatabaseConstructor` (unclear why - Android/iOS actuals
+    // are unaffected). Unneeded on jvm anyway: Database.jvm.kt's getDatabaseBuilder() uses
+    // Room's reflection-based JVM builder, not the constructor-factory path Native/Wasm need.
+    tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask<*>>("compileKotlinJvm") {
+        (this as org.gradle.api.tasks.SourceTask).exclude("**/DatabaseConstructor.kt")
+    }
+
     if (enableIosTarget) {
         tasks.named("kspKotlinIosArm64") {
             dependsOn("kspCommonMainKotlinMetadata")
