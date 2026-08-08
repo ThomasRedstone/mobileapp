@@ -12,7 +12,7 @@ private const val POLL_INTERVAL_MS = 3_000L
 // busctl can only call methods, not subscribe to PropertiesChanged signals (see
 // docs/ubuntu-touch-poc-plan.md), so this polls the adapter's Powered property rather than
 // reacting to it live.
-actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState> = flow {
+actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState>? = flow {
     var last: BluetoothState? = null
     while (true) {
         val powered = BusctlDbus.getProperty("org.bluez", ADAPTER_PATH, "org.bluez.Adapter1", "Powered")
