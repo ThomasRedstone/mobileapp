@@ -1,12 +1,13 @@
 # Ubuntu Touch X11/Libertine PoC — Handover
 
-Status as of this handover: **Spikes 1, 2, and 3's core question all done — confirmed on real
-hardware, not just a VM.** Spike 4 (touch input) is the only one not yet exercised, and real
-touch-capable hardware now exists and is reachable (see below) — it's a "do it," not a "find
-infrastructure for it" problem now. This document exists because the working session got very
-long; read this instead of the full history in `docs/ubuntu-touch-poc-plan.md` to get back up to
-speed quickly. The plan doc has the complete, chronological detail if you need it — this is the
-compressed version.
+Status as of this handover: **All four Phase 0 spikes have cleared their core questions, all
+confirmed on real hardware.** The PoC's central architectural premise — Libertine/Xwayland X11
+apps under a real Lomiri session, with real touch input reaching them — is validated end to end.
+What's left is engineering (a real Compose Desktop build in the container, understanding a
+separate `lomiri-app-launch` crash), not open feasibility questions. This document exists
+because the working session got very long; read this instead of the full history in
+`docs/ubuntu-touch-poc-plan.md` to get back up to speed quickly. The plan doc has the complete,
+chronological detail if you need it — this is the compressed version.
 
 **Real hardware access exists**: `ssh 100.87.156.48` (Tailscale IP) reaches a real, physical
 Ubuntu Touch phone (arm64, UT 24.04, real `himax-touchscreen`, user's own daily-driver device —
@@ -35,9 +36,11 @@ about de-risking that plan's Phase 0 spikes, not implementing the real thing yet
   session. This is the architecture working, for real, not a proxy or a VM approximation. See
   "Real-hardware breakthrough" below — the VM-only DRM/VT blocker further down never applied to
   real hardware at all.
-- **Spike 4 (touch input) — not yet exercised, but now genuinely reachable.** Real touch hardware
-  exists (see above). This just hasn't been done yet in this session — next person/session
-  should just do it, not go looking for infrastructure first.
+- **Spike 4 (touch input) — done, closed.** Injected a synthetic kernel-level touch event
+  (`python-evdev` `uinput`, mirroring the real touchscreen's exact capabilities) and confirmed
+  via `xev` (a real Libertine app under the live session) a full, non-synthetic
+  `EnterNotify`/`MotionNotify`/`ButtonPress`/`ButtonRelease` sequence — the real
+  kernel→libinput→Mir→Xwayland→X11 pipeline, not a shortcut.
 
 ## Real-hardware breakthrough (read this first, it supersedes most of Spike 3 below)
 

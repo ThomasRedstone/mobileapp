@@ -1,9 +1,10 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **Spike 3 core question answered on real hardware — X11-over-Libertine-Xwayland genuinely
-works under a real Lomiri session.** This is an exploratory proof-of-concept, not a committed
-feature — see `CLAUDE.md` platform rules (Android/iOS are the supported targets). Nothing here
-should be read as changing that until the PoC proves itself out further (touch input, a real
+Status: **All four Phase 0 spikes have now cleared their core questions, on real hardware.**
+X11-over-Libertine-Xwayland genuinely works under a real Lomiri session, and touch input genuinely
+reaches a real app through the real input stack. This is an exploratory proof-of-concept, not a
+committed feature — see `CLAUDE.md` platform rules (Android/iOS are the supported targets).
+Nothing here should be read as changing that until the PoC proves itself out further (a real
 Compose Desktop app rather than `xclock`, packaging).
 
 ## Goal
@@ -341,6 +342,34 @@ equivalent on real hardware, not a fundamental flaw in the architecture. The `lo
 tool's own crash is a separate, narrower loose end (worth understanding before shipping, since a
 production app would want a clean launch, not a lucky-survival one) — but it no longer gates the
 core feasibility question the whole PoC exists to answer.
+
+**Spike 4 (touch input) — closed, real and unambiguous.** Confirmed `phablet` can read
+`/dev/input/event2` (the real `himax-touchscreen`, a standard Protocol B multitouch device,
+1080×2340) directly — group membership (`android_input`) already grants this, no root needed.
+Rather than depend on the user's tap timing (three blind capture attempts on the real device's
+raw input stream caught nothing, likely a timing mismatch), created a synthetic `uinput`
+touchscreen device via `python-evdev` (already installed on-device) mirroring the real
+touchscreen's exact capabilities (`ABS_MT_SLOT`/`POSITION_X`/`POSITION_Y`/`TRACKING_ID`, same
+value ranges), and injected one touch-down/touch-up sequence at the kernel evdev level —
+mimicking what a real physical tap produces at the point that matters (the driver/libinput
+boundary), not shortcutting past it.
+
+Ran `xev` (installed into `x11poc-real`, launched the same real
+`libertine-launch`/`lomiri-app-launch` way as `xclock`) under the live session and captured the
+result: a complete `EnterNotify` → `MotionNotify` → `ButtonPress` (button 1) → `ButtonRelease`
+sequence, each explicitly marked `synthetic NO` by X11 itself (X11's own flag for whether an
+event came from `XSendEvent` at the protocol level — it didn't; this went through the real
+kernel→libinput→Mir→Xwayland→X11 pipeline) — with coordinates transformed for screen
+orientation/DPI relative to the raw injected values, further evidence of real pipeline
+processing rather than a passthrough shortcut.
+
+**This closes Spike 4.** Touch input genuinely reaches a real app running under the real
+Libertine/Xwayland/Lomiri stack, on real hardware. Combined with Spike 3's confirmation, the
+whole PoC's core architectural premise — Compose-Desktop-style X11 apps via Libertine, on a real
+Ubuntu Touch session, with real touch input reaching them — is now validated end-to-end. What
+remains is engineering, not open feasibility questions: getting an actual JRE/Compose Desktop
+build running in a Libertine container (rather than `xclock`/`xev` as stand-ins), and
+understanding the separate `lomiri-app-launch` crash before relying on it for anything real.
 
 ## Phases
 
