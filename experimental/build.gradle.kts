@@ -56,6 +56,8 @@ kotlin {
         }
     }
 
+    jvm()
+
 // Target declarations - add or remove as needed below. These define
 // which platforms this KMP module supports.
 // See: https://kotlinlang.org/docs/multiplatform-discover-project.html#targets
@@ -253,6 +255,13 @@ kotlin {
         iosMain {
             dependencies {
                 implementation(libs.okio)
+            }
+        }
+
+        jvmMain {
+            dependencies {
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.zxing.core)
             }
         }
     }

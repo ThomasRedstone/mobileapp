@@ -64,6 +64,8 @@ kotlin {
         withHostTestBuilder {}
     }
 
+    jvm()
+
 // For iOS targets, this is also where you should
 // configure native binary output. For more information, see:
 // https://kotlinlang.org/docs/multiplatform-build-native-binaries.html#build-xcframeworks
@@ -171,6 +173,7 @@ dependencies {
     add("kspAndroid", libs.room.compiler)
     add("kspIosArm64", libs.room.compiler)
     add("kspIosSimulatorArm64", libs.room.compiler)
+    add("kspJvm", libs.room.compiler)
 }
 
 val headSha by lazy {

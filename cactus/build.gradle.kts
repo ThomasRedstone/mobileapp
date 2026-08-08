@@ -28,6 +28,8 @@ kotlin {
         }
     }
 
+    jvm()
+
     val iosLibDir = project.file("src/commonMain/resources/ios/lib")
 
     listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
