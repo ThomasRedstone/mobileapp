@@ -147,6 +147,26 @@ strongly suggests their fix needs to be applied to more services than just the g
 (`maliit-server.service` at minimum) before app launch — including a Compose/X11 client's own
 process, if it needs its own EGL context — will work. Worth relaying back to that investigation.
 
+**Real app-launch attempt, and a real answer for why it doesn't work yet.** Wrote a proper
+`.desktop` entry for `xclock` inside the container's `/usr/share/applications` (matching the
+format of Libertine's own auto-generated entries) — `libertine-container-manager list-apps`
+picked it up immediately as `x11poc_xclock_0.0`, a real, launchable app ID, no manual
+registration step needed. Ran it via the actual mechanism (`lomiri-app-launch
+x11poc_xclock_0.0`, not a workaround): it printed `Started:` (matching exactly what the sibling
+investigation saw for both their embedder and a real preinstalled app), then `lomiri-app-launch`
+itself aborted with `Lost our connection with the registry` — no `xclock` process, no Xwayland,
+no `/tmp/.X11-unix` socket ever appeared.
+
+Checked *why* rather than accepting that as a dead end: `loginctl` showed the Lomiri session had
+freshly restarted (new session numbers, `lightdm.service` `Active: ... 27s ago`) — despite the
+sibling's Mesa/glvnd systemd drop-in already being present. The heavy `apt`/package-install
+activity from container creation almost certainly resource-starved this VM (2 CPU, 3GB RAM,
+running a full compositor concurrently) enough to disrupt the session mid-launch. This is
+environment fragility under load, not a new independent bug — but it does mean **reliable
+app-launch testing on this specific VM needs either more resources allocated to it or spacing
+heavy operations away from launch attempts**, and it's a useful data point for the sibling's own
+ongoing LightDM stability work, which has seen this exact instability from a different angle.
+
 **Where this leaves Phase 0**: spikes 1 and 2 are now genuinely confirmed on real
 infrastructure, not proxied. Spike 3's remaining open question narrowed from "does
 Compose-over-Xwayland-in-Libertine even work at all" to a specific, addressable one: get an
