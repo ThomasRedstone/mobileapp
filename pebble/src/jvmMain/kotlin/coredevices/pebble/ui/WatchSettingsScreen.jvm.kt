@@ -1,9 +1,11 @@
 package coredevices.pebble.ui
 
 import PlatformUiContext
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.ClipEntry
 import java.awt.datatransfer.StringSelection
 
+@OptIn(ExperimentalComposeUiApi::class)
 actual fun makeTokenClipEntry(token: String): ClipEntry = ClipEntry(StringSelection(token))
 
 // No on-device speech recognizer to enumerate supported languages from on desktop.

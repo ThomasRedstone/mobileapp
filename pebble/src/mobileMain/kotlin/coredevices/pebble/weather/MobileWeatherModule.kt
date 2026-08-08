@@ -1,5 +1,6 @@
 package coredevices.pebble.weather
 
+import dev.jordond.compass.Place
 import dev.jordond.compass.autocomplete.Autocomplete
 import dev.jordond.compass.autocomplete.mobile
 import dev.jordond.compass.geocoder.Geocoder
@@ -14,4 +15,4 @@ val mobileWeatherModule: Module = module {
     single { MobileGeocoder() } bind Geocoder::class
 }
 
-actual fun createWeatherAutocomplete(): Autocomplete? = Autocomplete.mobile()
+actual fun createWeatherAutocomplete(): Autocomplete<Place>? = Autocomplete.mobile()

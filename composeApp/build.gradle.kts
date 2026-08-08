@@ -258,7 +258,10 @@ kotlin {
             implementation(project(":libpebble3"))
             implementation(project(":index-ai"))
             api(project(":mcp"))
-            implementation(libs.health.kmp)
+            // com.viktormykhailiv:health-kmp has no jvm() variant (see
+            // docs/ubuntu-touch-poc-plan.md); composeApp doesn't reference its types
+            // directly (only through :pebble's already-abstracted PlatformHealthSync), so
+            // this is android/iOS-only rather than needing its own facade.
         }
     }
 }

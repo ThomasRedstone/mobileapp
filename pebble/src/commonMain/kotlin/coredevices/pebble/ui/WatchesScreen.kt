@@ -734,6 +734,8 @@ fun WatchesPreview() {
 
                     }
 
+                    override fun init() {}
+
                     override fun init(bluetoothPermissionChanged: Flow<Boolean>) {
                         TODO("Not yet implemented")
                     }

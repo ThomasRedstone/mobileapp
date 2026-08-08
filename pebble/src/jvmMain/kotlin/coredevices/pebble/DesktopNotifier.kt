@@ -13,11 +13,11 @@ internal object DesktopNotifier {
     private val icons = mutableMapOf<Int, TrayIcon>()
 
     fun notify(key: Int, title: String, body: String) {
-        val tray = SystemTray.getDefault()
-        if (tray == null) {
+        if (!SystemTray.isSupported()) {
             logger.w { "SystemTray not supported, dropping notification: $title" }
             return
         }
+        val tray = SystemTray.getSystemTray()
         remove(key)
         val image = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
         val trayIcon = TrayIcon(image, title)
@@ -33,6 +33,8 @@ internal object DesktopNotifier {
 
     fun remove(key: Int) {
         val trayIcon = icons.remove(key) ?: return
-        SystemTray.getDefault()?.remove(trayIcon)
+        if (SystemTray.isSupported()) {
+            SystemTray.getSystemTray().remove(trayIcon)
+        }
     }
 }
