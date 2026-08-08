@@ -259,6 +259,21 @@ only the underlying Lomiri display server, on this specific image generation und
 Spike 4 (touch input) still has no substitute for physical hardware and remains genuinely
 untestable here.
 
+**One further lever tried: `MIR_SERVER_PLATFORM_DISPLAY_LIBS`, inconclusive.** Mir's platform
+auto-probe log shows it found `mir:wayland` as an available driver (`Support priority: 0`, tied
+with the failing `mesa-kms`) but didn't select it. Mir supports forcing a specific platform via
+`MIR_SERVER_PLATFORM_DISPLAY_LIBS` instead of relying on auto-probe — a genuine, previously
+untried lever, not a repeat of the earlier three. Tried three plausible value formats
+(`mir:wayland`, the literal module filename `graphics-wayland.so.16`, and the bare name
+`wayland`); each produced a generic `unrecognised option` failure at a different point in
+startup. Also confirmed via `lomiri-systemd-wrapper`'s own source that it unconditionally
+overwrites `MIR_SERVER_FILE` to `$XDG_RUNTIME_DIR/mir_socket` regardless of what's passed in —
+reconfirming Lomiri really is designed to open its *own* new socket, not connect to USC's,
+which supports the standalone-server reading over the nested-client one. This is a real,
+recorded fourth data point, not a clean fix or a clean disproof — resolving it needs Mir's
+actual documentation or source for the expected value format, which wasn't available to look up
+further in this session.
+
 ## Phases
 
 ### Phase 0 — Spikes (go/no-go gates)
