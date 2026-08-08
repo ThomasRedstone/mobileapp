@@ -157,15 +157,36 @@ investigation saw for both their embedder and a real preinstalled app), then `lo
 itself aborted with `Lost our connection with the registry` — no `xclock` process, no Xwayland,
 no `/tmp/.X11-unix` socket ever appeared.
 
-Checked *why* rather than accepting that as a dead end: `loginctl` showed the Lomiri session had
-freshly restarted (new session numbers, `lightdm.service` `Active: ... 27s ago`) — despite the
-sibling's Mesa/glvnd systemd drop-in already being present. The heavy `apt`/package-install
-activity from container creation almost certainly resource-starved this VM (2 CPU, 3GB RAM,
-running a full compositor concurrently) enough to disrupt the session mid-launch. This is
-environment fragility under load, not a new independent bug — but it does mean **reliable
-app-launch testing on this specific VM needs either more resources allocated to it or spacing
-heavy operations away from launch attempts**, and it's a useful data point for the sibling's own
-ongoing LightDM stability work, which has seen this exact instability from a different angle.
+Checked *why* rather than accepting that as a dead end. First hypothesis (VM resource
+starvation from the container build) turned out to be **wrong, corrected on closer inspection**:
+`journalctl SYSLOG_IDENTIFIER=lightdm` showed the greeter has been crash-looping continuously on
+a tight ~60s cycle this entire time — the earlier `loginctl` read showing an "active" phablet
+session was a lucky snapshot mid-cycle, not evidence of real stability. A one-off status check
+isn't sufficient evidence of session health, the same lesson `ut-testing-confined-apps.md`
+already names generally.
+
+The real signature, from `~/.xsession-errors` (readable without root): `dlopen failed: library
+"libcutils.so" not found` (harmless per the sibling's own notes) followed by `A dependency job
+for ubuntu-touch-session-unencrypted.target failed` — the *exact* failure the sibling
+investigation diagnosed and fixed via a Mesa/glvnd `__EGL_VENDOR_LIBRARY_FILENAMES` systemd
+drop-in. Verified both halves of their fix are genuinely in place and active — the file exists
+correctly in both `/etc/systemd/system/lightdm.service.d/` and
+`/usr/lib/systemd/user/lomiri-full-greeter.service.d/`, and `systemctl --user show
+lomiri-full-greeter.service -p Environment` confirms systemd has it loaded. So the diagnosed fix
+is real and correctly applied, but **does not fully resolve the crash loop** — there's an
+additional, still-unidentified cause, plausibly related to the separate `maliit-server` EGL
+crash found earlier in this same session, since maliit is part of the session startup chain.
+Pinning that down further needs root (to read `/var/log/lightdm/lightdm.log` and
+`journalctl -xe` in full) — no `sudo` credentials are available here, matching the exact same
+wall the sibling investigation hit before *they* got root via an offline libguestfs edit.
+
+**The VM was then shut down** (a clean poweroff sequence in the serial console log, not a crash)
+— almost certainly the sibling investigation's own next step, not anything triggered here.
+Deliberately did not restart it: it's a shared, actively-used resource, and restarting another
+in-progress investigation's VM without coordination risks destroying state they need. This is a
+genuine external stopping point, not a dead end reached by giving up early — everything tried
+here either produced real signal or was correctly diagnosed as blocked on access this session
+doesn't have.
 
 **Where this leaves Phase 0**: spikes 1 and 2 are now genuinely confirmed on real
 infrastructure, not proxied. Spike 3's remaining open question narrowed from "does
