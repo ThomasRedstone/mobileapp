@@ -114,6 +114,7 @@ kotlin {
                 implementation(libs.ktor.client.core)
                 implementation(libs.kermit)
                 implementation(libs.serialization)
+                implementation(libs.androidx.navigation.compose)
                 implementation(libs.koin.core)
                 implementation(libs.koin.compose)
                 implementation(libs.firebase.auth)
