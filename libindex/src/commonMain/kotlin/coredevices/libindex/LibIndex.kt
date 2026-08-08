@@ -1,9 +1,7 @@
 package coredevices.libindex
 
 import coredevices.libindex.device.IndexDevice
-import coredevices.libindex.device.IndexDeviceManager
 import coredevices.libindex.device.IndexPlatformBluetoothAssociations
-import coredevices.libindex.device.RealScanning
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -25,8 +23,8 @@ interface Rings {
 }
 
 class RealLibIndex(
-    private val scanning: RealScanning,
-    private val deviceRepo: IndexDeviceManager,
+    private val scanning: Scanning,
+    private val deviceRepo: Rings,
     private val associations: IndexPlatformBluetoothAssociations?
 ): LibIndex, Scanning by scanning, Rings by deviceRepo {
     override fun init(bluetoothPermissionChanged: Flow<Boolean>) {

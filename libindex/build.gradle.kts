@@ -93,7 +93,6 @@ kotlin {
                 implementation(libs.ktor.client.logging)
                 implementation(libs.webview)
                 implementation(libs.uri)
-                implementation(libs.coredevices.haversine)
                 implementation(project(":cactus"))
                 implementation(project(":libpebble3"))
                 implementation(project(":index-ai"))
@@ -114,13 +113,28 @@ kotlin {
             }
         }
 
+        // Real device scanning/pairing (RealScanning, IndexDeviceManager, RealIndexPairing,
+        // RealIndexDevice, PrefsCollectionIndexStorage) needs coredevices.haversine, which
+        // publishes no jvm() variant (see docs/ubuntu-touch-poc-plan.md). Everything else in
+        // this module — the Scanning/Rings/IndexPairing interfaces and domain types
+        // (IndexDevice, KnownIndexDevice, etc.) that callers actually depend on — is
+        // haversine-free and stays in commonMain, shared with jvm too.
+        val mobileMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.coredevices.haversine)
+            }
+        }
+
         androidMain {
+            dependsOn(mobileMain)
             dependencies {
                 implementation(libs.ktor.client.okhttp)
             }
         }
 
         iosMain {
+            dependsOn(mobileMain)
             dependencies {
                 implementation(libs.ktor.client.darwin)
             }
