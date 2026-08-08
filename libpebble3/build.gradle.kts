@@ -180,6 +180,9 @@ afterEvaluate {
     tasks.named("kspAndroidMain") {
         dependsOn("kspCommonMainKotlinMetadata")
     }
+    tasks.named("kspKotlinJvm") {
+        dependsOn("kspCommonMainKotlinMetadata")
+    }
 
     if (enableIosTarget) {
         tasks.named("kspKotlinIosArm64") {
@@ -193,7 +196,7 @@ afterEvaluate {
 
 dependencies {
 //    add("kspCommonMainMetadata", libs.room.compiler)
-//    add("kspJvm", libs.room.compiler)
+    add("kspJvm", libs.room.compiler)
     add("kspCommonMainMetadata", project(":blobdbgen"))
     add("kspAndroid", libs.room.compiler)
 
