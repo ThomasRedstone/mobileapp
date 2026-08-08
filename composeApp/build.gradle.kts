@@ -266,6 +266,12 @@ kotlin {
     }
 }
 
+compose.desktop {
+    application {
+        mainClass = "coredevices.coreapp.MainKt"
+    }
+}
+
 compose.resources {
     packageOfResClass = "coreapp.composeapp.generated.resources"
 }
