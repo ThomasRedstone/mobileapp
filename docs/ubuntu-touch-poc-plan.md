@@ -516,20 +516,39 @@ Started, not finished — and the scope turned out bigger than "confirm/add a JV
 - `logging.desktop.kt` — real `getLogsCacheDir` (XDG cache dir convention) and
   `generateDeviceSummaryPlatformDetails` (JVM/OS properties) actuals.
 
-**Not done, and bigger than expected:** `composeApp`'s `App()` composable won't compile for
-`desktop` yet. `MainApplication.kt` (Android's `Application.onCreate()`) boots Koin with
-`androidDefaultModule, experimentalModule, apiModule, utilModule, watchModule` — a `desktopModule`
-equivalent doesn't exist, and each of those modules likely has its own Android/iOS-only surface
-(deep link handlers, theme providers, `PebbleAppDelegate`, notification setup, WorkManager
-background jobs) needing its own jvmMain actuals, the same shape of work as tonight's
-`LinuxPlatformServices.kt` for `libpebble3` but scattered across a much bigger module. Chose not to
-guess blind at that whole surface tonight rather than produce a pile of unverifiable code — this
-repo has no local JDK 17 (confirmed earlier this session) and no toolchain download configured, so
-nothing in this session has been compile-checked, only carefully hand-reviewed against real
-signatures. The roadmap's own instruction — build via Gradle on the real device, which has both
-JDK 17 and real internet — is the right way to burn this down: sync this branch there and iterate
-on `:composeApp:compileKotlinDesktop` compile errors one at a time, which will surface the actual
-list of missing actuals directly rather than guessing it here.
+**Confirmed on real hardware: `:libpebble3:compileKotlinJvm` compiles clean.** Synced this branch
+to the real Fairphone 4 (git bundle over the existing SSH/Tailscale link, cloned inside the
+`x11poc-real` Libertine container where JDK 17 already lives) and ran the real compiler, not a
+hand-review. `BUILD SUCCESSFUL in 6m 12s`, zero warnings against any of tonight's new files
+(`BusctlDbus.jvm.kt`, `LinuxBleScanner.jvm.kt`, `GattServer.jvm.kt`, `Pairing.jvm.kt`,
+`KableGattClient.jvm.kt`, `LibPebbleModule.jvm.kt`, `LinuxPlatformServices.kt`, `PebbleBle.jvm.kt`).
+Real, non-Android-SDK-related environment bugs found and fixed along the way (device-local, not
+committed): a stale `"installing"` entry stuck in Libertine's own `ContainersConfig.json` from an
+earlier aborted `git` install (blocked all future installs of that package with a false "already
+installed" error — cleared the entry manually), and the sandbox having no `/etc/passwd` entry for
+its own UID, which made the JVM's native home-directory lookup return a literal `"?"` and broke
+Kotlin/Native's `~/.konan` path resolution during configuration-cache serialization (worked around
+with `-Duser.home` forced explicitly and `--no-configuration-cache`).
+
+**`composeApp`'s `App()` doesn't compile for desktop yet, and the real reason is more precise (and
+more structural) than originally guessed.** It's not primarily about missing jvmMain actuals in
+`composeApp` itself — `:composeApp:compileKotlinDesktop` fails at dependency resolution, before any
+Kotlin compiles, because four of `composeApp`'s own project dependencies have **no `jvm()` target
+declared at all**: `:pebble`, `:util`, `:experimental`, `:libindex` (confirmed via Gradle's real
+"no matching variant" errors, which enumerate every variant each module *does* publish —
+`androidApiElements`, `iosArm64ApiElements`, etc., never a jvm one). `:mcp` and `:index-ai`, by
+contrast, already declare `jvm()` and resolved fine. `:util` itself depends on `:cactus` and
+`:libindex` (confirmed via `util/build.gradle.kts`), and `:cactus`'s native counterpart
+`:cactus-native` needs the Android NDK just to configure (confirmed: license-accepted, then
+Gradle attempted a real NDK install) — a real, unrelated dependency chain that would need its own
+jvmMain story (or a JVM-only escape hatch) before `:util` could ever compile for desktop.
+
+**What this means for scope:** getting `composeApp` running on desktop isn't "port a handful of
+expects" the way `libpebble3` was — it's first adding real `jvm()` targets (with their own jvmMain
+actuals) to four more KMP library modules, one of which (`util`) pulls in a native/NDK-dependent
+module in turn. That's multi-module, multi-day-scale work, not something to push through via more
+blind trial-and-error in one sitting. Not attempted further this session — flagging precisely,
+rather than guessing at a fix, is the responsible stopping point here.
 
 ## Phases 5 and 6 (not started)
 
