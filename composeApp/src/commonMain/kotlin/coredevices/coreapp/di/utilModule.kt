@@ -10,7 +10,6 @@ import coredevices.analytics.RealCoreAnalytics
 import coredevices.api.WisprFlowAuth
 import coredevices.coreapp.CommonAppDelegate
 import coredevices.pebble.health.HealthSyncTracker
-import coredevices.pebble.health.PlatformHealthSync
 import coredevices.coreapp.push.PushMessaging
 import coredevices.coreapp.ui.navigation.CoreDeepLinkHandler
 import coredevices.coreapp.ui.screens.BugReportProcessor
@@ -112,5 +111,4 @@ val utilModule = module {
     singleOf(::KirinkiTranscriptionService)
     single<UsersDao> { UsersDaoImpl({ get() }, get(), get(), get(), get()) }
     singleOf(::HealthSyncTracker)
-    singleOf(::PlatformHealthSync)
 }

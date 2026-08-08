@@ -88,7 +88,7 @@ class IndexDeviceManager(
         }
     }
 
-    fun init() {
+    override fun init() {
         scope.launch {
             // Re-reconcile on every change so the stored ring can't get stuck out of sync
             // with the platform bond list (e.g. unbonded while BLUETOOTH_CONNECT was denied).

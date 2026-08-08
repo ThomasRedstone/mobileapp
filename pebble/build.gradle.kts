@@ -80,7 +80,6 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(project(":libpebble3"))
-                implementation(libs.health.kmp)
                 implementation(compose.runtime)
                 implementation(compose.foundation)
                 implementation(libs.compose.material3)
@@ -108,7 +107,6 @@ kotlin {
                 implementation(libs.webview)
                 implementation(libs.backhandler)
                 api(libs.uri)
-                implementation(libs.firebase.crashlytics)
                 implementation(libs.firebase.auth)
                 implementation(libs.firebase.firestore)
                 implementation(libs.coredevices.speex)
@@ -129,7 +127,21 @@ kotlin {
             }
         }
 
+        // com.viktormykhailiv:health-kmp and dev.gitlive:firebase-crashlytics publish no jvm()
+        // variant (see docs/ubuntu-touch-poc-plan.md). RealPlatformHealthSync (the only
+        // health-kmp-backed class) lives here; the crashlytics touch points instead go through
+        // a small expect/actual seam (util/Crashlytics.kt) since they're a handful of one-line
+        // calls, not worth a whole class split.
+        val mobileMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.health.kmp)
+                implementation(libs.firebase.crashlytics)
+            }
+        }
+
         androidMain {
+            dependsOn(mobileMain)
             dependencies {
                 // Add Android-specific dependencies here. Note that this source set depends on
                 // commonMain by default and will correctly pull the Android artifacts of any KMP
@@ -142,6 +154,7 @@ kotlin {
         }
 
         iosMain {
+            dependsOn(mobileMain)
             dependencies {
                 // Add iOS-specific dependencies here. This a source set created by Kotlin Gradle
                 // Plugin (KGP) that each specific iOS target (e.g., iosX64) depends on as

@@ -2,7 +2,6 @@ package coredevices.pebble
 
 import co.touchlab.kermit.Logger
 import com.algolia.client.api.SearchClient
-import com.viktormykhailiv.kmp.health.HealthManagerFactory
 import coredevices.pebble.account.BootConfigProvider
 import coredevices.pebble.account.FirestoreKnownWatchesDao
 import coredevices.pebble.account.FirestoreKnownWatchesSync
@@ -137,7 +136,6 @@ val watchModule = module {
     singleOf(::RealPebbleAccount) bind PebbleAccount::class
     single { FirestoreLockerDao { get() } }
     single { FirestoreKnownWatchesDao { get() } }
-    single { HealthManagerFactory().createManager() }
     singleOf(::RealFirestoreLocker) bind FirestoreLocker::class
     singleOf(::RealFirestoreKnownWatchesSync) bind FirestoreKnownWatchesSync::class
     singleOf(::RealAppstoreCache) bind AppstoreCache::class

@@ -149,7 +149,7 @@ import coredevices.util.transcription.PlatformSpeechRecognizer
 import coredevices.util.transcription.SpokenLanguageOptions
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.auth
-import dev.gitlive.firebase.crashlytics.crashlytics
+import coredevices.pebble.util.setCrashlyticsCollectionEnabled
 import io.rebble.libpebblecommon.connection.AppContext
 import io.rebble.libpebblecommon.connection.ConnectedPebble
 import io.rebble.libpebblecommon.connection.KnownPebbleDevice
@@ -1620,7 +1620,7 @@ fun rememberSettingsItemsState(navBarNav: NavBarNav?, snackbarDisplay: SnackbarD
                         if (!it) {
                             coreAnalytics.logEvent("crashlytics_collection_disabled")
                         }
-                        Firebase.crashlytics.setCrashlyticsCollectionEnabled(it)
+                        setCrashlyticsCollectionEnabled(it)
                     },
                 ),
                 basicSettingsToggleItem(

@@ -1,5 +1,7 @@
 package coredevices.pebble
 
+import coredevices.pebble.health.NoOpPlatformHealthSync
+import coredevices.pebble.health.PlatformHealthSync
 import io.rebble.libpebblecommon.connection.AppContext
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
@@ -11,4 +13,5 @@ actual val platformWatchModule: Module = module {
     single { AppContext() }
     single<Platform> { Platform.Android }
     singleOf(::PebbleJvmDelegate)
+    single<PlatformHealthSync> { NoOpPlatformHealthSync }
 }

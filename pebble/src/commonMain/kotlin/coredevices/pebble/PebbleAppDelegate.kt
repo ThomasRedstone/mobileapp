@@ -17,8 +17,7 @@ import coredevices.pebble.services.PebbleWebServices
 import coredevices.util.AppResumed
 import coredevices.util.DoneInitialOnboarding
 import coredevices.util.PermissionRequester
-import dev.gitlive.firebase.Firebase
-import dev.gitlive.firebase.crashlytics.crashlytics
+import coredevices.pebble.util.setCrashlyticsCustomKey
 import io.rebble.libpebblecommon.connection.BleDiscoveredPebbleDevice
 import io.rebble.libpebblecommon.connection.CommonConnectedDevice
 import io.rebble.libpebblecommon.connection.ConnectedPebble
@@ -110,12 +109,12 @@ class PebbleAppDelegate(
                 libPebble.watches.mapNotNull { watches ->
                     watches.maxByOrNull { if (it is KnownPebbleDevice) it.lastConnected.epochSeconds else 0 }
                 }.filterIsInstance<KnownPebbleDevice>().distinctUntilChanged().collect { device ->
-                    Firebase.crashlytics.setCustomKey("last_connected_serial", device.serial)
-                    Firebase.crashlytics.setCustomKey(
+                    setCrashlyticsCustomKey("last_connected_serial", device.serial)
+                    setCrashlyticsCustomKey(
                         "last_connected_watch_type",
                         device.watchType.revision
                     )
-                    Firebase.crashlytics.setCustomKey(
+                    setCrashlyticsCustomKey(
                         "last_connected_watch_firmware",
                         device.runningFwVersion
                     )
@@ -173,19 +172,19 @@ class PebbleAppDelegate(
                     combine(flows) { it.toList() }
                 }.collect {
                     val activeSessions = it.filterNotNull()
-                    Firebase.crashlytics.setCustomKey("active_pkjs_sessions", activeSessions.size)
+                    setCrashlyticsCustomKey("active_pkjs_sessions", activeSessions.size)
                     logger.d { "Active PKJS sessions: ${activeSessions.size}" }
                     activeSessions.take(4).forEachIndexed { index, session ->
                         val uuid = session.uuid.toString()
-                        Firebase.crashlytics.setCustomKey(
+                        setCrashlyticsCustomKey(
                             "pkjs_session_${index}_app_uuid",
                             uuid
                         )
-                        Firebase.crashlytics.setCustomKey(
+                        setCrashlyticsCustomKey(
                             "pkjs_${uuid}_app",
                             session.appInfo.longName
                         )
-                        Firebase.crashlytics.setCustomKey(
+                        setCrashlyticsCustomKey(
                             "pkjs_${uuid}_ready",
                             session.sessionIsReady
                         )

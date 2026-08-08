@@ -20,6 +20,7 @@ interface Scanning {
 interface Rings {
     val rings: IndexDevices
     fun warnIfNoCompanionAssociations()
+    fun init()
 }
 
 class RealLibIndex(
