@@ -554,7 +554,81 @@ rather than guessing at a fix, is the responsible stopping point here.
 
 Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision, deferred) remain exactly as
 scoped in the original roadmap — untouched this session, blocked behind Phase 4 producing a real
-running UI to launch in the first place.
+running UI to launch in the first place. Phase 6's option set is now better understood, though
+(see below) — it isn't just "Libertine vs. QML rewrite".
+
+## Phase 6, revisited: a genuine third distribution option — X11 packaged as a Click
+
+The original framing (Libertine-packaged vs. a QML-native rewrite) missed a real middle path:
+**bundling the desktop app directly into a Click**, no Libertine container at all. Clickable
+builds/packages arbitrary ARM executables, not just QML — an X11 Click cross-compiles the app,
+bundles its libraries/plugins/resources inside the `.click`, uses a launcher script to set up
+paths/scaling, and sets `X-Ubuntu-XMir-Enable=true` in the desktop entry so UT provides its X11
+compatibility environment (historically XMir, now Xwayland) — the same Xwayland path already
+proven this session with `xclock` and now `composeApp`'s desktop target, just packaged as a normal
+launcher-visible, AppArmor-confined app instead of something living inside a Libertine container.
+Officially supported: the Click format's desktop-entry flag is documented for exactly this case
+(UBports Click package documentation).
+
+|                    | X11 packaged as Click                  | Libertine                          |
+|--------------------|-----------------------------------------|-------------------------------------|
+| Dependencies       | Bundled or statically linked            | Installed with apt                  |
+| Distribution       | Single `.click`, potentially OpenStore  | Installed within a local container  |
+| Isolation          | Normal per-app AppArmor confinement     | Container plus UT integration       |
+| Updates            | Click/OpenStore or your own feed        | Package/container management        |
+| Size               | Dependencies duplicated per app         | Libraries shared inside container   |
+| Porting effort     | Paths, confinement, UI often need fixes | Existing packages may run unchanged |
+| Mobile integration | Can be added deliberately               | Generally weak                      |
+
+**Our specific risk with this path, not a generic one:** tonight's whole JVM BLE stack depends on
+subprocess exec (`busctl` via `ProcessBuilder`) and a persistent `dbus-python` companion process
+talking to the *system* D-Bus bus — not just the ordinary app-scoped D-Bus access a stock Click
+confinement profile grants. Arbitrary subprocess spawning plus system-bus reach is exactly the kind
+of thing AppArmor confinement is designed to restrict, so "just ship it as a confined Click" doesn't
+work unmodified for this app's current architecture. Two real, already-proven patterns from sibling
+projects in `~/own/` for exactly this — privileged work happens outside confinement, the main app
+stays confined — worth reusing rather than re-deriving:
+
+- **`ut-sonic-player`'s pattern: a system `.deb` installs a custom AppArmor policygroup.**
+  `packaging/system-deb/build.sh` builds a small `_all.deb` that drops a policygroup file into
+  `/usr/share/apparmor/easyprof/policygroups/ubuntu/<policy-version>/`, then its `postinst` runs
+  `aa-clickhook -f` and reloads the click's profile via `apparmor_parser -r`. This grants the
+  confined click one specific extra permission (there: owning an MPRIS bus name, which stock policy
+  groups don't cover) without going fully unconfined. Caveat, in their own build script's comments:
+  UT's OTA updates re-lay the rootfs and dpkg state doesn't survive, so the `.deb` has to live
+  somewhere that does (`/home/phablet`) and get manually reinstalled post-OTA — one documented
+  command, not a mystery to re-diagnose each time. Real tradeoff: a custom policygroup is a
+  Click-reviewer red flag for OpenStore distribution, same as an unconfined click would be.
+- **`linux-auto`'s pattern: the confined app never touches D-Bus at all.** Their click can't reach
+  their root daemon's system-bus name (`org.linuxauto.Daemon1`) — custom policy groups are rejected
+  outright for their distribution path, and shipping unconfined wasn't acceptable either. Their
+  fix: the confined app writes one word into a file inside **its own** writable directory (always
+  permitted under stock confinement, no policy group needed at all), a root-owned systemd path unit
+  notices the write and acts, and status comes back the same way. The command file is treated as
+  untrusted input — reduced to `[a-z-]`, capped at 16 characters, matched against a closed set.
+  This is the more defensible-for-OpenStore option of the two, at the cost of needing an
+  inotify-poll round trip instead of a direct call.
+
+Applied to us: rather than the confined UI Click itself shelling out to `busctl`/running the
+`dbus-python` GATT server companion, a small **privileged helper** (deb-installed, system-bus
+access, doing exactly the `busctl`/GATT-server work already proven this session) would be the
+`linux-auto`-style daemon, with the confined UI Click talking to it via the write-to-own-directory
+pattern rather than direct D-Bus. Not decided or built — flagged as the concrete shape Phase 6
+would take if the Click-packaging path is chosen over Libertine, once Phase 4 is further along.
+
+Other shapes the user raised, not yet evaluated in detail: a snap containing a click; a deb
+containing both the click and the privileged system setup, so one install does both halves.
+
+Real, generic catches with the Click-as-desktop-app path (from the same source), independent of
+our own subprocess/D-Bus specifics: confined apps can't assume writable `$HOME`, `/usr/share`
+resources, unrestricted D-Bus, subprocess spawning, or arbitrary filesystem access without those
+assumptions being patched or redirected; anything not supplied by the UT framework has to ship
+inside the Click; scaling/touch-scrolling/rotation/on-screen-keyboard often need app-specific
+fixes; Content Hub, notifications, lifecycle suspension, and Lomiri styling aren't automatic just
+from using the Click format; and X11 graphics acceleration can be limited on libhybris-based
+ports, which historically makes heavyweight rendering stacks (browsers, Electron) expensive —
+worth checking whether Skiko/Skia's rendering path is affected the same way, since it's a
+comparable weight class to what makes Electron problematic there.
 
 ## Phases
 
