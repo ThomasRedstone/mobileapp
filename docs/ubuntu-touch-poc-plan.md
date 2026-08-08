@@ -37,13 +37,13 @@ before spending anything on a QML rewrite.
 
 ## Progress log
 
-- **Spike 1 (K/N linux toolchain) — partially verified, promising.** `linuxX64` builds/links/runs
-  natively on the dev host. `linuxArm64` cross-compiles, links, and runs correctly under
+- **Spike 1 (K/N linux toolchain) — fully done, confirmed on real hardware.** `linuxX64`
+  builds/links/runs natively on the dev host. `linuxArm64` cross-compiles, links, and runs under
   `qemu-aarch64` emulation against Konan's bundled glibc 2.25 sysroot (see
-  `ubuntu-touch-poc/core-service-spike`). This de-risks the toolchain question significantly,
-  but is **not** confirmation on real Halium hardware — the emulated run uses Konan's own
-  sysroot, not Ubuntu Touch's actual userland/libc. Still needs a real-device run before this
-  spike can be called a clean pass.
+  `ubuntu-touch-poc/core-service-spike`) — and, once real hardware access existed, the exact
+  same binary was `scp`'d to a real UT phone and run natively there (no emulation, no Konan
+  sysroot): clean output, exit 0. The one caveat from the emulated result (Konan's sysroot vs.
+  Ubuntu Touch's actual userland/libc) no longer applies — this is a clean pass.
 - **Spike 2 (BlueZ D-Bus) — partial signal via proxy.** Built a private-session-bus stub
   imitating BlueZ's shape (`ObjectManager.GetManagedObjects`, `Adapter1.StartDiscovery`) and a
   client calling it the way a real `libpebble3` actual would — see
@@ -370,6 +370,48 @@ Ubuntu Touch session, with real touch input reaching them — is now validated e
 remains is engineering, not open feasibility questions: getting an actual JRE/Compose Desktop
 build running in a Libertine container (rather than `xclock`/`xev` as stand-ins), and
 understanding the separate `lomiri-app-launch` crash before relying on it for anything real.
+
+## Beyond Phase 0: real Pebble BLE pairing and data exchange, live
+
+Once the four spikes closed, work continued straight into real `libpebble3` protocol territory —
+genuinely pairing with and receiving data from the user's physical Pebble Time 2, from the real
+UT phone, live. This isn't part of the original spike plan; it's the natural next step once the
+platform questions were answered, and it de-risks the actual BLE transport work Spike 2 always
+pointed at needing.
+
+**What's proven, for real, against physical hardware:**
+
+- Full BLE discovery → connect → SMP pairing → bonding → encryption, against the real watch,
+  driven via raw `busctl` calls replicating `libpebble3`'s own documented protocol (exact UUIDs
+  from `LEConstants.kt`, exact pairing-trigger byte encoding from `PebblePairing.kt`). Two full
+  pair/bond cycles completed, both requiring and receiving real user approval on both devices —
+  genuine SMP pairing, not silent/automatic.
+- Confirmed this watch has no reversed-PPoG GATT service, meaning it needs the phone to host its
+  own local GATT server (the "forward" PPoG mode) — built one from scratch via `dbus-python`
+  against BlueZ's `GattManager1`, mirroring `GattServer.android.kt`'s real, working
+  `addServices()` structure (main PPoG service + `META_CHARACTERISTIC_SERVER` + the
+  `FAKE_SERVICE_UUID` decoy service) and `PebbleBle.android.kt`'s real `SERVER_META_RESPONSE`
+  byte value — not guessed, ported directly from the app's own Android `actual`s.
+- Found and fixed two genuine bugs in the from-scratch server via `bluetoothd`'s own journal
+  (`src/gatt-database.c` errors), not guesswork: a missing required `Descriptors` property key
+  (BlueZ rejects GATT characteristics without one, even empty) and an invented, invalid flag
+  string (`encrypt-write-without-response` doesn't exist in BlueZ's flag vocabulary — corrected
+  to plain `write-without-response`, since the link is already encrypted from pairing).
+- **Result: the real watch discovered our server, read the meta characteristic, subscribed to
+  notifications, and wrote real protocol data** — 14 bytes decoding to `C1131411010W`, almost
+  certainly the watch's own serial/identifier string as part of its real handshake.
+
+**What this means:** the platform-specific unknown — whether real BLE pairing and GATT data
+exchange with a Pebble is even achievable from Ubuntu Touch — is answered. What's left to reach
+a working `jvmMain` `GattServer`/`BleScanner`/`GattClient` actual is now port-and-adapt work: the
+UUIDs, byte values, and service structure proven live here go directly into
+`GattServer.jvm.kt`/`KableBleScanner.jvm.kt`/`KableGattClient.jvm.kt` (all currently `TODO`
+stubs), using a working D-Bus library — `dbus-python` proved reliable throughout this session;
+`dbus-java`'s `EXTERNAL` SASL auth had an unresolved bug against this BlueZ/dbus-daemon
+combination (see the Spike 2/3 history above) worth revisiting or avoiding. The actual Pebble
+protocol parsing above the raw bytes (PPoG framing, the real request/response protocol) is
+already fully implemented in `commonMain` (`PPoGStream`, etc.) and needs no platform-specific
+work at all.
 
 ## Phases
 
