@@ -1,11 +1,13 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **All four Phase 0 spikes have now cleared their core questions, on real hardware.**
-X11-over-Libertine-Xwayland genuinely works under a real Lomiri session, and touch input genuinely
-reaches a real app through the real input stack. This is an exploratory proof-of-concept, not a
-committed feature — see `CLAUDE.md` platform rules (Android/iOS are the supported targets).
-Nothing here should be read as changing that until the PoC proves itself out further (a real
-Compose Desktop app rather than `xclock`, packaging).
+Status: **`:composeApp:compileKotlinDesktop` — `BUILD SUCCESSFUL`, real, on the real Fairphone 4,
+zero errors.** The actual app — Pebble watch UI, BLE stack, Ring/Index-AI features behind a
+platform facade — compiles for Ubuntu Touch's desktop target. Phases 0 through most of 4 of the
+roadmap are done and verified by the real compiler, not by inspection. This is still an exploratory
+proof-of-concept, not a committed feature — see `CLAUDE.md` platform rules (Android/iOS are the
+supported targets). What's left before this is "running": Phase 4's remaining piece (a real desktop
+entry point/Koin bootstrap — App() compiles but nothing calls it yet), then Phase 5
+(`lomiri-app-launch`) and Phase 6 (distribution, see below).
 
 ## Goal
 
@@ -498,7 +500,35 @@ block's classic-BT binding (`BtClassicConnector`) isn't provided on this platfor
 long as nothing ever tries to connect a `PebbleBtClassicIdentifier`, which `supportsBtClassic =
 false` should guarantee, but unverified against real hardware.
 
-## Phase 4: real composeApp UI — target scaffolded, one real dependency blocker found and fixed
+## Phase 4: real composeApp UI — `compileKotlinDesktop` is green
+
+**Final result, confirmed on real hardware:** `:composeApp:compileKotlinDesktop` — `BUILD
+SUCCESSFUL in 3m 30s`, zero errors, `75 actionable tasks: 19 executed, 56 up-to-date`. The whole
+app compiles for desktop: `:libpebble3` (the JVM BLE stack), `:util`, `:libindex`, `:pebble`,
+`:experimental` (via `ExperimentalDevicesFacade`, see below), and `composeApp` itself. Getting here
+from the state described in the rest of this section took roughly a dozen real on-device compile
+round trips, each fixing one genuine, previously-unknown problem — the log below is kept as the
+real history of what that took, not aspirational planning.
+
+Beyond what's narrated below: `:pebble` had its own further no-jvm-variant dependencies
+(`com.viktormykhailiv:health-kmp`, `dev.gitlive:firebase-crashlytics` again, `io.github.coredevices
+.speex`, `dev.jordond.compass:*-mobile`) needing the same `mobileMain`-source-set-split treatment
+as `:libindex` — including extracting real STT/voice-transcription pipeline code
+(`STTRouter.kt`/`HybridTranscription.kt`'s Speex decoding) behind a `SpeexFrameDecoder` seam, done
+with explicit authorization given its similarity to the Ring-pipeline sensitivity. `:experimental`
+itself never got a real jvm target — it has its own deep, separate Haversine usage in real Ring
+sync/pairing logic — instead `composeApp`'s five call sites into it were extracted behind a new
+`ExperimentalDevicesFacade` (`:util`), with the whole self-contained Ring-onboarding UI package
+(7 files) relocated into `:experimental` itself. `composeApp` then needed its own 12 missing
+`jvmMain`-equivalent actuals (all honest no-ops except device-id and desktop notifications, which
+are real) — first attempt put them in the wrong source set (`jvmMain` instead of `desktopMain`,
+since `composeApp` names its target `jvm("desktop")` unlike every other module's plain `jvm()`),
+caught and fixed on the next round trip.
+
+**Not done yet:** nothing calls `App()`. The compile succeeding means the code is correct and
+linkable, not that there's a running entry point — `composeApp` has no desktop `main()`/Koin
+bootstrap analogous to Android's `MainApplication.onCreate()` yet. That's the concrete remaining
+piece of Phase 4 before there's an actual window on screen.
 
 Started, not finished — and the scope turned out bigger than "confirm/add a JVM target" implied.
 
@@ -552,10 +582,11 @@ rather than guessing at a fix, is the responsible stopping point here.
 
 ## Phases 5 and 6 (not started)
 
-Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision, deferred) remain exactly as
-scoped in the original roadmap — untouched this session, blocked behind Phase 4 producing a real
-running UI to launch in the first place. Phase 6's option set is now better understood, though
-(see below) — it isn't just "Libertine vs. QML rewrite".
+Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision) remain exactly as scoped in
+the original roadmap — untouched this session. Phase 4 has now produced a real compiling app, but
+not yet a running one (no desktop entry point/`main()` calling `App()` — see above), so Phase 5
+(fixing the *launcher*) is still one concrete step further out. Phase 6's option set is now better
+understood, though (see below) — it isn't just "Libertine vs. QML rewrite".
 
 ## Phase 6, revisited: a genuine third distribution option — X11 packaged as a Click
 
