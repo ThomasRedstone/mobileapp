@@ -4,8 +4,6 @@ import co.touchlab.kermit.LogWriter
 import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
 import coredevices.ExperimentalDevices
-import dev.gitlive.firebase.Firebase
-import dev.gitlive.firebase.crashlytics.crashlytics
 import io.ktor.utils.io.core.append
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,10 +38,10 @@ fun initLogging() {
                 val log = buildString {
                     append("[$tag] $message")
                 }
-                Firebase.crashlytics.log(log)
+                crashlyticsLog(log)
             }
             if (severity != Severity.Debug && severity != Severity.Verbose) {
-                throwable?.let { Firebase.crashlytics.recordException(it) }
+                throwable?.let { crashlyticsRecordException(it) }
             }
         }
     })
@@ -56,6 +54,11 @@ fun initLogging() {
 }
 
 expect fun generateDeviceSummaryPlatformDetails(): String
+
+// Firebase Crashlytics (dev.gitlive:firebase-crashlytics) publishes no jvm artifact at all, so
+// this platform's whole dependency is kept out of commonMain and behind these expects instead.
+expect fun crashlyticsLog(message: String)
+expect fun crashlyticsRecordException(throwable: Throwable)
 
 fun generateDeviceSummary(experimentalDevices: ExperimentalDevices): String {
     val deviceSummary = generateDeviceSummaryPlatformDetails()

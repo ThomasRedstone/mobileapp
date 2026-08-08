@@ -7,8 +7,14 @@ import androidx.compose.ui.text.intl.Locale
 import coredevices.coreapp.appVersionCode
 import coredevices.coreapp.appVersionName
 import coredevices.coreapp.isDebuggableBuild
+import dev.gitlive.firebase.Firebase
+import dev.gitlive.firebase.crashlytics.crashlytics
 import kotlinx.datetime.TimeZone
 import org.koin.mp.KoinPlatform
+
+actual fun crashlyticsLog(message: String) = Firebase.crashlytics.log(message)
+
+actual fun crashlyticsRecordException(throwable: Throwable) = Firebase.crashlytics.recordException(throwable)
 
 actual fun getLogsCacheDir(): String {
     val context = KoinPlatform.getKoin().get<Context>().applicationContext

@@ -498,9 +498,44 @@ block's classic-BT binding (`BtClassicConnector`) isn't provided on this platfor
 long as nothing ever tries to connect a `PebbleBtClassicIdentifier`, which `supportsBtClassic =
 false` should guarantee, but unverified against real hardware.
 
-Remaining: Phase 4 (real UI) — confirm/add the JVM desktop Compose target, build on-device via
-Gradle, bundle a JRE in the Libertine container — then Phase 5 (the `lomiri-app-launch` crash) and
-Phase 6 (distribution, deferred).
+## Phase 4: real composeApp UI — target scaffolded, one real dependency blocker found and fixed
+
+Started, not finished — and the scope turned out bigger than "confirm/add a JVM target" implied.
+
+**Done:**
+- `composeApp` now has a real `jvm("desktop")` target (`composeApp/build.gradle.kts`), with a
+  `desktopMain` source set depending on `compose.desktop.currentOs`.
+- Found and fixed a real, concrete blocker along the way: `dev.gitlive:firebase-crashlytics` (used
+  by `composeApp`'s shared `initLogging()`) publishes **no jvm artifact at all** (confirmed via its
+  Gradle module metadata — `firebase-auth`/`firebase-firestore` do have `jvm` variants, crashlytics
+  doesn't). Adding the `jvm()` target with that dependency still in `commonMain` would have failed
+  dependency resolution immediately. Fixed properly, not worked around: the two crashlytics call
+  sites (`logging.kt`) are now behind `expect fun crashlyticsLog`/`crashlyticsRecordException`,
+  `libs.firebase.crashlytics` moved out of `commonMain.dependencies` into `androidMain`/`iosMain`
+  only, and `desktopMain` gets a no-op actual.
+- `logging.desktop.kt` — real `getLogsCacheDir` (XDG cache dir convention) and
+  `generateDeviceSummaryPlatformDetails` (JVM/OS properties) actuals.
+
+**Not done, and bigger than expected:** `composeApp`'s `App()` composable won't compile for
+`desktop` yet. `MainApplication.kt` (Android's `Application.onCreate()`) boots Koin with
+`androidDefaultModule, experimentalModule, apiModule, utilModule, watchModule` — a `desktopModule`
+equivalent doesn't exist, and each of those modules likely has its own Android/iOS-only surface
+(deep link handlers, theme providers, `PebbleAppDelegate`, notification setup, WorkManager
+background jobs) needing its own jvmMain actuals, the same shape of work as tonight's
+`LinuxPlatformServices.kt` for `libpebble3` but scattered across a much bigger module. Chose not to
+guess blind at that whole surface tonight rather than produce a pile of unverifiable code — this
+repo has no local JDK 17 (confirmed earlier this session) and no toolchain download configured, so
+nothing in this session has been compile-checked, only carefully hand-reviewed against real
+signatures. The roadmap's own instruction — build via Gradle on the real device, which has both
+JDK 17 and real internet — is the right way to burn this down: sync this branch there and iterate
+on `:composeApp:compileKotlinDesktop` compile errors one at a time, which will surface the actual
+list of missing actuals directly rather than guessing it here.
+
+## Phases 5 and 6 (not started)
+
+Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision, deferred) remain exactly as
+scoped in the original roadmap — untouched this session, blocked behind Phase 4 producing a real
+running UI to launch in the first place.
 
 ## Phases
 

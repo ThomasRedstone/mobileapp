@@ -154,7 +154,18 @@ kotlin {
             }
         }
     }
-    
+
+    // Ubuntu Touch / Linux desktop target, via Libertine + Xwayland (docs/ubuntu-touch-poc-plan.md).
+    // Not a general-purpose desktop target: no Windows/macOS packaging is set up, and several
+    // Android/iOS-only expects (deep links, theming delegates, phone-integration services) still
+    // need jvmMain actuals before App() itself will compile here — real remaining work, not
+    // finished by this target existing.
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
     sourceSets {
         all {
             languageSettings {
@@ -168,6 +179,7 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(project.dependencies.platform(libs.firebase.bom))
+            implementation(libs.firebase.crashlytics)
             implementation(libs.firebase.crashlytics.ndk)
             implementation(compose.preview)
             implementation(compose.uiTooling)
@@ -189,6 +201,14 @@ kotlin {
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
             implementation(libs.crashkios)
+            implementation(libs.firebase.crashlytics)
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.coroutines)
+            }
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -219,7 +239,6 @@ kotlin {
 
             implementation(libs.firebase.auth)
             implementation(libs.firebase.firestore)
-            implementation(libs.firebase.crashlytics)
 
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.contentNegotiation)

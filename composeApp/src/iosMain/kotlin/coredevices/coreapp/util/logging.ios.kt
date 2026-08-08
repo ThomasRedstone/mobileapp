@@ -1,5 +1,7 @@
 package coredevices.coreapp.util
 
+import dev.gitlive.firebase.Firebase
+import dev.gitlive.firebase.crashlytics.crashlytics
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
@@ -18,6 +20,10 @@ import platform.Foundation.localeIdentifier
 import platform.UIKit.UIDevice
 import platform.posix.uname
 import platform.posix.utsname
+
+actual fun crashlyticsLog(message: String) = Firebase.crashlytics.log(message)
+
+actual fun crashlyticsRecordException(throwable: Throwable) = Firebase.crashlytics.recordException(throwable)
 
 actual fun getLogsCacheDir(): String {
     val cacheDirectory = NSFileManager.defaultManager.URLForDirectory(
