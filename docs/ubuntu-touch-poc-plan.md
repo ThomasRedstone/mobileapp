@@ -41,15 +41,6 @@ before spending anything on a QML rewrite.
   but is **not** confirmation on real Halium hardware — the emulated run uses Konan's own
   sysroot, not Ubuntu Touch's actual userland/libc. Still needs a real-device run before this
   spike can be called a clean pass.
-- **Spike 3 (Compose Desktop over X11) — partial signal, promising.** Under Xvfb (real X11, no
-  Libertine/Xwayland/touch hardware involved), Skiko's native libraries load and the app runs to
-  a clean exit with no crash (`ubuntu-touch-poc/ui-client-spike`). GL context creation fails and
-  falls back gracefully — expected given this sandbox has no GPU, not informative about a real
-  device's GPU driver. Pixel-level proof of correct rendering was **not** obtained:
-  `window.paint()`-based capture returned a blank frame, and `Robot`-based screen capture hung
-  (this Xvfb build lacks the XTest extension). So: the rendering stack initializes and doesn't
-  crash on X11, but visual correctness is unverified, and Xwayland-in-Libertine specifics plus
-  touch input are entirely untested by this proxy.
 - **Spike 2 (BlueZ D-Bus) — partial signal via proxy.** Built a private-session-bus stub
   imitating BlueZ's shape (`ObjectManager.GetManagedObjects`, `Adapter1.StartDiscovery`) and a
   client calling it the way a real `libpebble3` actual would — see
@@ -60,12 +51,34 @@ before spending anything on a QML rewrite.
   behavior and AppArmor confinement, and the eventual implementation is Kotlin/Native (via
   `libdbus` cinterop), not Python — that binding is still unwritten. Needs real hardware for a
   genuine pass.
-- **Spike 4 (touch input via Xwayland) — blocked, no proxy possible.** Touch input translation
-  can only be observed on physical touch hardware; there is nothing to substitute for it here.
-  Needs real hardware.
+- **Spike 3 (Compose Desktop over X11) — partial signal, promising, with an unresolved snag.**
+  Under Xvfb (real X11, no Libertine/Xwayland/touch hardware involved), Skiko's native libraries
+  load and the simple version of the app (one `LaunchedEffect`, no pointer handling) runs to a
+  clean exit with no crash, and produced a screenshot file via `window.paint()` capture — though
+  that capture came back blank, so it doesn't prove correct visual output, only that composition
+  and the exit path both ran. GL context creation fails and falls back gracefully — expected
+  given this sandbox has no GPU, not informative about a real device's GPU driver. Root-caused
+  the earlier "Robot hangs" finding: it is **not** a missing-XTest issue as first assumed —
+  `Robot`-based screen capture still hung with XTest explicitly enabled and confirmed present via
+  `xdpyinfo`, across two independent Xvfb instances. Leading unconfirmed hypothesis: Xvfb here
+  has no window manager, and Robot/composition behavior may depend on one; couldn't install a WM
+  to test this (no `sudo`, not available via `brew`). Xwayland-in-Libertine specifics remain
+  entirely untested by this proxy either way.
+- **Spike 4 (touch input via Xwayland) — attempted via synthetic XTest injection, inconclusive.**
+  Confirmed `/dev/uinput` is writable and `xdotool`/XTest are available, then wired a
+  `pointerInput` handler into the Compose window and fired synthetic clicks via
+  `xdotool mousemove`+`click` at the mapped window's screen coordinates (window mapping
+  independently confirmed via `xwininfo`). No pointer event was ever observed reaching Compose's
+  input pipeline, across three configurations (default GL, forced `SOFTWARE_COMPAT` rendering,
+  fresh Xvfb instance) — and critically, not even the unrelated first `LaunchedEffect` fired in
+  these runs, which had fired cleanly in the simpler spike 3 build. That strongly suggests the
+  composition/frame-clock loop itself doesn't fully activate in this Xvfb setup once a
+  `pointerInput` modifier is present, not specifically that touch/pointer delivery fails — but
+  this could not be isolated further without a window manager (see spike 3). Real device
+  confirmation needed either way; there is no substitute here for actual touch hardware.
 
 No further Phase 0 progress is possible in this environment without physical Ubuntu Touch
-hardware (or at minimum a Halium/UT emulator image).
+hardware (or at minimum a Halium/UT emulator image with a real compositor).
 
 ## Phases
 

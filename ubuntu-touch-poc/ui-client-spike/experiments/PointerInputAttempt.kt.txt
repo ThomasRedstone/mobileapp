@@ -1,0 +1,71 @@
+Reference copy of the spike 4 pointer-input experiment described in
+docs/ubuntu-touch-poc-plan.md. Not part of the buildable module -- swap this
+in for src/desktopMain/kotlin/Main.kt to reproduce against a real X server
+with XTest enabled (`Xvfb :N -screen 0 800x600x24 +extension XTEST`) and a
+synthetic click via `xdotool mousemove --sync X Y && xdotool click 1`.
+
+Result: no pointer event observed in this sandbox, and notably the unrelated
+first LaunchedEffect(Unit) didn't fire either -- see the plan doc's spike 4
+entry for the full writeup and the leading (unconfirmed) hypothesis.
+
+--- code ---
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.input.pointer.pointerInput
+import java.awt.Dimension
+import java.awt.Point
+import java.awt.Rectangle
+import java.awt.Robot
+import javax.imageio.ImageIO
+import javax.swing.SwingUtilities
+import kotlin.system.exitProcess
+
+fun main() {
+    val clicked = mutableStateOf(false)
+    SwingUtilities.invokeAndWait {
+        val window = ComposeWindow()
+        window.size = Dimension(400, 300)
+        window.setContent {
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(1500)
+                val location: Point = window.locationOnScreen
+                val image = Robot().createScreenCapture(Rectangle(location.x, location.y, window.width, window.height))
+                ImageIO.write(image, "png", java.io.File("/tmp/compose-desktop-x11-spike.png"))
+                println("SPIKE: screenshot captured")
+            }
+            LaunchedEffect(clicked.value) {
+                if (clicked.value) {
+                    println("SPIKE: pointer event received by Compose")
+                    kotlinx.coroutines.delay(300)
+                    exitProcess(0)
+                }
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent()
+                                clicked.value = true
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicText("core-service-spike: compose desktop over X11 OK")
+            }
+        }
+        window.isVisible = true
+    }
+    Thread.sleep(8000)
+    println("SPIKE: no pointer event received within timeout")
+    exitProcess(1)
+}
