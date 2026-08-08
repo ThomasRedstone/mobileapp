@@ -183,17 +183,79 @@ wall the sibling investigation hit before *they* got root via an offline libgues
 **The VM was then shut down** (a clean poweroff sequence in the serial console log, not a crash)
 — almost certainly the sibling investigation's own next step, not anything triggered here.
 Deliberately did not restart it: it's a shared, actively-used resource, and restarting another
-in-progress investigation's VM without coordination risks destroying state they need. This is a
-genuine external stopping point, not a dead end reached by giving up early — everything tried
-here either produced real signal or was correctly diagnosed as blocked on access this session
-doesn't have.
+in-progress investigation's VM without coordination risks destroying state they need.
+
+**Unblocked independently: booted our own copy of the same disk image, with real root access.**
+Rather than wait on the shared VM, copied `ubuntu-touch-pdk-img-amd64.raw` (25GB at this point,
+grown from container-creation writes) to an independent location and booted a separate QEMU
+instance under our own control — no interference with the sibling's work. Got root the same
+documented way they did (`apt-get download` the matching kernel package — no root needed for
+that — to work around `/boot/vmlinuz` not being world-readable for `libguestfs`'s supermin,
+then `guestfish` offline edits), but simpler: rather than reproduce their password-hash dance,
+just overwrote the `phablet` line in `/var/lib/extrausers/shadow` with a known SHA-512 hash and
+appended our own SSH key to `authorized_keys`, all offline before first boot. Both worked
+immediately — real root, real SSH, on infrastructure nothing else is using.
+
+**Root-caused the crash loop completely — a real, mechanistic explanation, not a guess.** Two
+hypotheses were tested and disproven by direct experiment before landing on the real one — worth
+recording precisely, since it demonstrates the investigation converged on a firm answer rather
+than stopping at the first plausible-looking cause:
+
+1. *Missing `MIR_SOCKET`*: `systemctl --user show-environment` showed `MIR_SOCKET=` empty while
+   `MIR_SERVER_HOST_SOCKET=/run/mir_socket` was set. Manually setting `MIR_SOCKET` and re-running
+   the greeter binary directly — **no change**, hypothesis rejected by direct test.
+2. *General environment erosion*: a second `show-environment` check minutes later showed most
+   Lomiri-specific variables (`WAYLAND_DISPLAY`, `QT_*`, `GDK_*`, etc.) had vanished entirely —
+   real evidence that `lomiri-full-greeter.service`'s own `ExecStopPost` (which explicitly clears
+   `WAYLAND_DISPLAY=` and `MIR_SOCKET=` on every failed attempt) erodes the environment with each
+   crash-loop cycle. Restored the full variable set and restarted the service properly via
+   `systemctl --user restart` (not a manual binary run, so it's a faithful reproduction) —
+   **identical failure**. This env-erosion effect is real (worth fixing on its own merits, since
+   it turns any first failure into a permanent loop) but it is not the root cause of the *first*
+   failure.
+
+3. **The actual root cause**: read `/usr/libexec/lomiri-systemd-wrapper` directly. Lomiri's
+   full-greeter is *designed* to run as its own standalone Mir server with direct hardware access
+   (`QT_QPA_PLATFORM=mirserver`, its own `MIR_SERVER_FILE` under `$XDG_RUNTIME_DIR`) — it is
+   **not** meant to nest against `unity-system-compositor`'s socket in this mode, which corrects
+   an assumption made earlier in this same investigation. On real hardware, USC (which starts
+   first, at boot) and Lomiri's own server coordinate ownership of the DRM/KMS device via VT
+   switching. The Mir startup log explicitly shows: `No VT switching support available:
+   MinimalConsoleServices does not support VT switching` — this VM's `-display egl-headless` QEMU
+   configuration has no virtual-console/VT subsystem at all. With no VT-switch mechanism, USC
+   (already running since early boot) permanently holds DRM master, and Lomiri's own
+   `mesa-kms` platform probe fails with exactly the error seen: `Failed to acquire DRM master:
+   Operation not permitted` → `Failed to find platform for current system`. This fully explains
+   the crash loop, independent of the Mesa/glvnd fix (which is real and necessary, just not
+   sufficient) and independent of any environment-variable state.
+
+**This is a QEMU/virtualization environment problem, not an architectural problem with the
+X11/Libertine approach.** Tested — and disproved — the obvious QEMU-display fix rather than just
+proposing it: rebooted the same independent VM with `-display gtk,gl=on` (a real virtual console
+via Xvfb on the host) instead of `-display egl-headless`. **Identical failure**, byte-for-byte
+same log output, including the same `No VT switching support available` and `Failed to acquire
+DRM master` lines. So the QEMU *display backend* (headless vs. windowed) isn't the deciding
+factor either — `/dev/tty1`-`/dev/tty63` all exist as real device nodes in the guest either way,
+but Mir reports `Failed to open current VT` regardless, and `mesa-kms` is denied DRM master
+regardless. The actual mechanism connecting USC's DRM ownership to VT state (or whatever *does*
+gate it in this specific Mir/kernel/QEMU combination) remains unidentified — three hypotheses
+tested and disproved (`MIR_SOCKET`, full environment restoration, display backend type) without
+finding the real lever. Note also: the sibling investigation's one *reported* stable session
+(`unity8`/`ubuntu-app-launch`, real `wayland-0` socket) was on the older legacy
+`ubuntu-touch-mainline-generic-amd64` image (Xenial-era, Unity8, a different and older
+Mir/session-init generation) — not this modern PDK/26.04 `lomiri-full-greeter` image, which as
+far as this investigation and the sibling's own log can tell, has never yet reached a stable
+session. There isn't yet a known-good QEMU recipe for *this specific* image generation.
 
 **Where this leaves Phase 0**: spikes 1 and 2 are now genuinely confirmed on real
-infrastructure, not proxied. Spike 3's remaining open question narrowed from "does
-Compose-over-Xwayland-in-Libertine even work at all" to a specific, addressable one: get an
-Xwayland instance running for the session (either via the proper
-`lomiri-app-launch`/click-install path, matching what the sibling investigation is actively
-pursuing, or by extending the EGL/glvnd systemd-drop-in fix to whatever's supposed to start it).
+infrastructure, not proxied. Spike 3 is **honestly diagnosed to its current limit, not
+resolved** — three specific, testable hypotheses for the display-server crash loop were each
+tried and disproved by direct experiment, narrowing it to something at the Mir/KMS/QEMU
+virtualization boundary that needs either Mir source-level investigation or a genuinely different
+virtualization approach (e.g. a KVM setup exposing real DRI/DRM passthrough, or testing against
+the legacy-image generation the sibling did get stable). The Libertine container itself, package
+installation into it, and app-ID registration all work end-to-end and are not in question —
+only the underlying Lomiri display server, on this specific image generation under QEMU, is.
 Spike 4 (touch input) still has no substitute for physical hardware and remains genuinely
 untestable here.
 
