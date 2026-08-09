@@ -24,10 +24,9 @@ import org.koin.dsl.module
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
-    // java.io.tmpdir itself is set via JDK_JAVA_OPTIONS (before the JVM starts - too early for
-    // any code here to race), but nothing creates the directory; Room's bundled SQLite driver
-    // needs it to already exist (docs/ubuntu-touch-poc-plan.md, Phase 6).
-    java.io.File(System.getProperty("java.io.tmpdir")).mkdirs()
+    // $TMPDIR (see coreapp-launch.sh, docs/ubuntu-touch-poc-plan.md Phase 6) isn't created by
+    // anything else, and Room's bundled SQLite driver needs it to already exist.
+    System.getenv("TMPDIR")?.takeIf { it.isNotBlank() }?.let { java.io.File(it).mkdirs() }
 
     val koinApp = startKoin {
         modules(
