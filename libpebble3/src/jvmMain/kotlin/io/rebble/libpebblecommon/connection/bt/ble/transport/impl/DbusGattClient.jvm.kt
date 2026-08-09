@@ -72,8 +72,15 @@ private fun buildSystemBusConnection(): DBusConnection {
     currentUnixUid()?.let { uid ->
         builder.transportConfig().configureSasl().withSaslUid(uid).back()
     }
+    // dbus-java's default reply timeout is too short for Device1.Connect(): BlueZ blocks that
+    // call until the link genuinely comes up or fails, which routinely takes longer than the
+    // default under real-world retry contention (observed live: consistent NoReply timeouts
+    // during a run of back-to-back reconnects, no correlated BlueZ-side failure).
+    builder.transportConfig().withTimeout(CONNECT_DBUS_TIMEOUT_MS)
     return builder.build()
 }
+
+private const val CONNECT_DBUS_TIMEOUT_MS = 30_000
 
 @DBusInterfaceName("org.bluez.Device1")
 private interface Device1 : DBusInterface {
