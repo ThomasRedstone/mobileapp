@@ -1181,6 +1181,52 @@ D-Bus reality - nothing here has been tested from inside an actual confined Clic
 it's a real, read policy file, not a real successful `Device1.Connect()` from inside one. That's
 the concrete next step, not landing the two-part architecture this section replaces.
 
+## Phase 6, actually tested inside a real confined Click: the policy works, with one real catch
+
+Built and sideloaded a minimal throwaway test Click (`blecheck.tomredstone`, `policy_groups:
+["bluetooth"]`) directly on-device, using `phone-manager` (a separate real tool at
+`~/own/phone-manager`, `pm push`/`pm payload` against its root daemon `pmd`) to get around this
+image's actual install path being broken - no `pkcon` binary, and the on-device PackageKit has no
+click plugin at all (`.click` files are flatly unrecognized, not a permissions problem). This isn't
+a workaround to route around real confinement - `pmd`'s install still goes through the genuine
+`click install` + `aa-clickhook` + `apparmor_parser` pipeline as root; it's just the plumbing that
+gets a real `.click` onto the device and its AppArmor profile compiled and loaded, which turned out
+to need doing by hand anyway (`aa-clickhook` didn't fire automatically on this image's `pm`-driven
+install path - loaded the compiled profile directly with `apparmor_parser -r` instead, confirmed via
+the profile's real internal name, `blecheck.tomredstone_blecheck_<version>`, not the `click_`-prefixed
+filename).
+
+**First real result: denied.** A single-process Python script (matching how `DbusGattClient.jvm.kt`
+talks D-Bus - direct system-bus IPC, no subprocess) run under the loaded profile via `aa-exec` got:
+
+```
+apparmor="DENIED" operation="dbus_method_call" bus="system" path="/org/bluez/hci0"
+interface="org.freedesktop.DBus.Properties" member="Get" mask="send" name=":1.75"
+label="blecheck.tomredstone_blecheck_0.1.2" peer_pid=4450 peer_label="unconfined"
+```
+
+**Root cause, confirmed by a second, targeted test:** the policy group's rule
+(`dbus (receive, send) peer=(name="org.bluez{,.*}", label=unconfined)`) glob-matches the message's
+*destination address* against well-known bus names only. `python-dbus`'s normal `bus.get_object()`
+convenience API resolves `"org.bluez"` to bluetoothd's current unique connection name (`:1.75`) once,
+then addresses every subsequent call to that unique name directly - which the policy's
+`"org.bluez{,.*}"` glob does not match, hence the denial. Proved this precisely by hand-building a
+low-level D-Bus message with `destination='org.bluez'` kept literal (bypassing the
+auto-resolving-proxy convenience API) and sending it directly: **it succeeded**, real reply,
+`Adapter1.Powered = True`, through genuine enforced confinement.
+
+**Why this matters for real, not just for this test script:** resolve-once-then-route-by-unique-name
+is standard D-Bus client behavior, not a python-dbus quirk - it's how proxy/remote-object APIs work
+across bindings, because addressing by well-known name on every call means the bus daemon re-resolves
+it every time. `DbusGattConnector`'s `conn.getRemoteObject("org.bluez", devicePath,
+Device1::class.java)` (`DbusGattClient.jvm.kt:150`) is exactly this pattern. **Not yet verified**
+whether dbus-java's `getRemoteObject` proxy resolves-and-caches the unique name the same way
+python-dbus does (likely, given how universal the pattern is, but genuinely unchecked) - that's the
+concrete next step before Phase 6 can be called viable: either confirm dbus-java keeps addressing by
+well-known name on every call (nothing to do), or it doesn't, and `DbusGattConnector` needs to route
+its calls through low-level messages with a literal `destination="org.bluez"` instead of the
+convenience proxy API it uses today - a real, scoped, single-file change if so, not a redesign.
+
 ## Phase 6, real precedent found: `linux-auto`'s privileged-helper pattern, and its real limit
 
 The "not yet done" list above named a real AppArmor policy/entry point for the confined-Click
