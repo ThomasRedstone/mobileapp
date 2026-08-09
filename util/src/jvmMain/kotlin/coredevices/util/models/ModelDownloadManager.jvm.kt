@@ -1,6 +1,7 @@
 package coredevices.util.models
 
 import co.touchlab.kermit.Logger
+import coredevices.util.AppDirs
 import coredevices.util.CommonBuildKonfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,8 +17,7 @@ import java.util.zip.ZipInputStream
 
 private const val MODELS_DIR_NAME = "models"
 
-internal fun modelsDirectory(): File =
-    File(System.getProperty("user.home"), ".local/share/coreapp/$MODELS_DIR_NAME").apply { mkdirs() }
+internal fun modelsDirectory(): File = AppDirs.dataDir(MODELS_DIR_NAME).apply { mkdirs() }
 
 // If the zip's contents were nested under a single top-level directory, hoist them up so
 // model files sit directly in the slug directory (matches the layout getSTTModelPath()/etc. expect).

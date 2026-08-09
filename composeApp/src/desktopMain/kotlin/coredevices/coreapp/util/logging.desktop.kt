@@ -1,16 +1,14 @@
 package coredevices.coreapp.util
 
+import coredevices.util.AppDirs
+
 // Firebase Crashlytics has no jvm artifact (see the expect declarations in commonMain's
 // logging.kt) -- no-op rather than crash or silently drop the app's whole crash-reporting path.
 actual fun crashlyticsLog(message: String) {}
 
 actual fun crashlyticsRecordException(throwable: Throwable) {}
 
-actual fun getLogsCacheDir(): String {
-    val base = System.getenv("XDG_CACHE_HOME")?.takeIf { it.isNotBlank() }
-        ?: (System.getProperty("user.home") + "/.cache")
-    return "$base/coreapp/logs/"
-}
+actual fun getLogsCacheDir(): String = AppDirs.cacheDir("logs").path + "/"
 
 actual fun generateDeviceSummaryPlatformDetails(): String = buildString {
     appendLine("Device Summary (Linux desktop)")

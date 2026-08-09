@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=CoreApp
 Comment=Pebble/Core watch companion
-Exec=coreapp/bin/coreapp
+Exec=env COREAPP_DIR_NAME=coreapp.tomredstone coreapp/bin/coreapp
 Icon=coreapp/lib/coreapp.png
 Terminal=false
 Type=Application

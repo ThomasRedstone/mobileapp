@@ -3,6 +3,7 @@ package coredevices.coreapp.firebase
 import android.app.Application
 import co.touchlab.kermit.Logger
 import com.google.firebase.FirebasePlatform
+import coredevices.util.AppDirs
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.FirebaseOptions
 import dev.gitlive.firebase.initialize
@@ -86,17 +87,9 @@ private fun searchedLocations() = listOf(
     "the app's own resources",
 ).joinToString(", ")
 
-private fun configDir(): File {
-    val base = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }
-        ?: (System.getProperty("user.home") + "/.config")
-    return File(base, "coreapp")
-}
+private fun configDir(): File = AppDirs.configDir()
 
-private fun firebaseStateDir(): File {
-    val base = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }
-        ?: (System.getProperty("user.home") + "/.local/share")
-    return File(base, "coreapp/firebase")
-}
+private fun firebaseStateDir(): File = AppDirs.dataDir("firebase")
 
 /**
  * File-per-key rather than the app's `Settings`: the JVM SDK's default `Settings` is
