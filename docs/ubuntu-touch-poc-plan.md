@@ -1124,6 +1124,64 @@ far only tested Libertine's Xwayland path, not a confined one - `MESA: error: ZI
 choose pdev` / software-rendering fallback was already needed even in the unconfined case, so this
 needs real verification, not an assumption that confinement is the only variable).
 
+## Phase 6, real precedent found: `linux-auto`'s privileged-helper pattern, and its real limit
+
+The "not yet done" list above named a real AppArmor policy/entry point for the confined-Click
+write-to-own-directory IPC as unsolved. It's already solved and running on this exact device by a
+sibling project - `linux-auto` (Android Auto for Ubuntu Touch), installed as
+`linux-auto.tomredstone`. Read directly rather than designed from scratch:
+
+- **The Click itself requests zero special permissions.** Its compiled AppArmor policy
+  (`/var/lib/apparmor/clicks/linux-auto.tomredstone_linux-auto_0.2.0.json`) is
+  `{"policy_groups": [], "policy_version": 2404.1}` - completely default confinement.
+- **The mechanism**: the confined app writes a request into its own writable directory
+  (`~/.local/share/linux-auto.tomredstone/command`); a root-owned `systemd` `.path` unit
+  (`linux-auto-appcontrol.path`, `PathChanged=`) notices the write and triggers a `oneshot`
+  privileged service (`linux-auto-appcontrol.service`, `User=root` implied by the daemon unit
+  alongside it) that does the real work. Status flows back the same way - a `.timer`-triggered
+  oneshot (`linux-auto-appstatus.timer`, every 5s) refreshes a status file the confined app can
+  read. Both `.path` and `.service` units set `StartLimitIntervalSec=0` for a documented reason:
+  systemd's default 5-starts-in-10s rate limit trips under legitimate polling load and silently
+  stops the watch - a real gotcha worth carrying over.
+- **The privileged daemon itself** (`linux-autod.service`) runs as real root, `Type=simple`,
+  restarts `on-failure`, and is careful about the boundary back to the confined user's own
+  services (explicitly forwards `PULSE_SERVER`/`PULSE_COOKIE` env vars so it can reach the
+  phablet user's PulseAudio, since root's own session has neither) - a real, concrete answer for
+  how a privileged BLE helper would need to reach back into user-session state if it ever needs
+  to (unlikely for pure BlueZ D-Bus work, which is itself already a system-bus service).
+
+**Where this pattern falls short for us, and the fix**: `linux-auto`'s file-write +
+`.path`-trigger + 5-second-polled-status mechanism is designed for coarse, infrequent control
+signals (start/stop a car-mode session, read a status enum) - it's not going to work for PPoG,
+which needs continuous, low-latency, bidirectional byte-stream traffic (GATT characteristic
+notify/write happening many times per second during real use, not once every 5 seconds).
+
+The default AppArmor profile (read directly from
+`/var/lib/apparmor/profiles/click_linux-auto.tomredstone_linux-auto_0.2.0`) already grants the
+confined app full read/write/create/link/execute (`mrwklix`) on
+`/{,var/}run/user/*/@{APP_PKGNAME}/` - a per-app subdirectory of `$XDG_RUNTIME_DIR`, with **zero
+extra policy groups**, identically to the `~/.local/share/@{APP_PKGNAME}/` directory `linux-auto`
+already uses. That directory is exactly where a Unix domain socket file can live. **Proposed
+design**: the privileged helper (running as root/bluetooth-group, unrestricted by this app's own
+AppArmor profile) listens on a Unix socket at
+`/run/user/<uid>/coredevices.coreapp/ble.sock`; the confined Click connects to it directly for
+real-time GATT traffic, instead of polling files. `junixsocket` - already a real dependency here
+since tonight's `DbusGattClient.jvm.kt` work - is the natural library for this on the Click side
+too.
+
+**Still needs real verification, not assumption**: whether AppArmor's `unix()` socket-mediation
+class is actually enforced under this specific `policy_version: 2404.1` profile - stronger
+evidence now, not just absence-of-proof: `sonic-player-dev.tom` requests the `networking` policy
+group specifically (a real, standard group, distinct from the custom-policygroup pattern flagged
+elsewhere in this doc as a reviewer red flag) and genuinely does real TCP/HTTP networking - and
+its compiled profile *still* has no explicit `network inet`/`network inet6`/`unix (...)` rule, only
+one narrow `network netlink dgram` exception (for Qt's `QNetworkInterface` enumeration). If a real
+networking app doesn't need an explicit rule for its own TCP sockets under this AppArmor/kernel
+build, a Unix domain socket - governed by ordinary file permissions on its own filesystem node,
+which the profile already grants in full on `$XDG_RUNTIME_DIR/@{APP_PKGNAME}/` - is very likely
+to just work the same way. Still genuinely untested against a live running confined Click with an
+actual socket open, which is the real next step, not proof.
+
 ## Firebase on desktop: real initialization, and a real Google sign-in flow
 
 Closing the gap the Phase 4 section flagged as "needs a real credentials decision, not a quick
