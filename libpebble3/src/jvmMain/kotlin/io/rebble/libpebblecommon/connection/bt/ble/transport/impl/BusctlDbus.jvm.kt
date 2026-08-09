@@ -1,6 +1,7 @@
 package io.rebble.libpebblecommon.connection.bt.ble.transport.impl
 
 import co.touchlab.kermit.Logger
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -19,6 +20,21 @@ private val logger = Logger.withTag("BusctlDbus")
 internal object BusctlDbus {
     private const val TIMEOUT_SECONDS = 15L
 
+    // Libertine's bwrap sandbox uses --tmpfs /run, which wipes /run/dbus - only
+    // /run/user/<uid> is bind-mounted back in. dbus_proxy.py (run on the real host, outside
+    // the sandbox) forwards a socket placed there to the real system bus, so this is reachable
+    // from inside. Falls back to the real socket directly when it exists (e.g. unsandboxed use).
+    private val dbusSystemBusAddress: String? by lazy {
+        val realSocket = File("/run/dbus/system_bus_socket")
+        val xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR")
+        val proxySocket = xdgRuntimeDir?.let { File(it, "dbus-system-proxy.sock") }
+        when {
+            realSocket.exists() -> "unix:path=${realSocket.absolutePath}"
+            proxySocket?.exists() == true -> "unix:path=${proxySocket.absolutePath}"
+            else -> null
+        }
+    }
+
     fun call(vararg args: String): String? = run("busctl", "--system", "call", *args)
 
     fun getProperty(service: String, path: String, iface: String, property: String): String? =
@@ -30,7 +46,9 @@ internal object BusctlDbus {
 
     private fun run(vararg cmd: String): String? {
         return try {
-            val process = ProcessBuilder(*cmd).redirectErrorStream(false).start()
+            val builder = ProcessBuilder(*cmd).redirectErrorStream(false)
+            dbusSystemBusAddress?.let { builder.environment()["DBUS_SYSTEM_BUS_ADDRESS"] = it }
+            val process = builder.start()
             val stdout = process.inputStream.bufferedReader().readText()
             val stderr = process.errorStream.bufferedReader().readText()
             val finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
