@@ -286,6 +286,15 @@ compose.desktop {
         // jpackage's own .deb/.rpm output.
         nativeDistributions {
             packageName = "coreapp"
+
+            // Baked into the generated jpackage .cfg's [JavaOptions], applied before the JVM
+            // starts - the only reliable way to override java.io.tmpdir for JDK-internal code
+            // (androidx.sqlite's bundled driver extracts a native lib via java.nio.file.Files,
+            // which doesn't pick up a runtime System.setProperty or $TMPDIR env var). Plain /tmp
+            // isn't writable under Click confinement (docs/ubuntu-touch-poc-plan.md, Phase 6).
+            // Ubuntu Touch is single-user with a fixed $HOME, so a literal path is fine here -
+            // matches the same assumption already made throughout this codebase's desktop paths.
+            jvmArgs += "-Djava.io.tmpdir=/home/phablet/.cache/coreapp.tomredstone/tmp"
         }
     }
 }
