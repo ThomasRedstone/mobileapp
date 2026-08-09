@@ -1,23 +1,21 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **the real app is running on the real Fairphone 4, rendering its actual UI, launches via
-the real `lomiri-app-launch` production mechanism (not a workaround). Root cause of the BLE
-connect failure is now found: it's Kable's `btleplug` JVM/JNI bridge itself, not BlueZ, not the
-watch, not proxy latency, not bonding.** A raw `dbus-java` `Device1.Connect()` call — same two-hop
-D-Bus proxy, same watch, same everything — connects in under a second and holds a stable,
-fully-GATT-resolved connection indefinitely, repeatably. The real app's actual code path (Kable →
-`kable-btleplug-ffi`'s Rust `btleplug` client) never issues a single D-Bus call towards the watch
-at all during a whole connect attempt, then times out at Kable's own 60s Kotlin-side watchdog. See
-"Kable/btleplug never actually attempts the connection" below for the full trace and the
-recommended fix (replace the JVM `GattClient` implementation with a direct `dbus-java`-based one —
-already proven reliable — instead of depending on `kable-btleplug-ffi`). Phase 4 is done (see
-"Phase 4, completed" below). Phase 5's `lomiri-app-launch` crash is root-caused precisely (a real
-upstream library bug, unrelated to this app - see "Phase 5" below) rather than just reproduced.
-Phase 6 now has a real, reasoned recommendation (X11-as-Click over Libertine, see "Phase 6,
-decided" below) - not yet implemented, but a genuine decision rather than an open question.
-**Phase 1 is now genuinely resolved, not worked around**: a real JVM-native D-Bus library
-(`hypfvieh/dbus-java`) authenticates against the real system bus, reads real BlueZ properties, and
-— as of tonight's testing — reliably drives real GATT connections. See "Phase 1, resolved" below.
+Status: **the actual goal is met.** The real app launches with one command
+(`lomiri-app-launch x11poc-real_coreapp_0.0`), establishes a real BLE GATT connection to the real
+Pebble Time 2, and real data flows both ways: firmware/serial negotiation, then live health sync
+(step and heart-rate `BlobDB2` records inserted into the local database continuously, session
+after session) over a sustained, stable connection - not a one-off demo. Root cause of the whole
+night's BLE instability was Kable's `btleplug` JVM/JNI bridge never issuing a single D-Bus call in
+this sandboxed environment (see "Kable/btleplug never actually attempts the connection" below);
+the fix was a real replacement JVM `GattClient` built directly on `dbus-java`
+(`DbusGattClient.jvm.kt`), which now drives the real connection Kable never could. Phase 4 is done
+(see "Phase 4, completed" below). Phase 5's `lomiri-app-launch` crash is root-caused precisely (a
+real upstream library bug, unrelated to this app - see "Phase 5" below) rather than just
+reproduced. Phase 6 has a real, reasoned recommendation (X11-as-Click over Libertine, see "Phase
+6, decided" below) - not yet implemented, and explicitly out of scope for the usable-app goal.
+**Phase 1 is genuinely resolved**: a real JVM-native D-Bus library (`hypfvieh/dbus-java`)
+authenticates against the real system bus and now drives the entire real BLE client transport in
+production, not just diagnostics. See "Phase 1, resolved" below.
 
 ## Goal
 
@@ -957,6 +955,46 @@ a workaround — every primitive it needs (system bus auth, `Connect()`, propert
 service/characteristic discovery via `GetManagedObjects`) has already been exercised successfully
 tonight via raw `dbus-java` calls. Not yet implemented — this is the next concrete step towards the
 actual goal (a real, sustained BLE connection with data flowing), not a documentation-only finding.
+
+## The usable-app goal, achieved: real BLE connection, real data flowing
+
+Following through on the recommendation above: `DbusGattClient.jvm.kt` was written, wired in via
+`createBleGattConnector()`, and deployed. First live test against the real Pebble Time 2 (after a
+real device reboot, a fresh unpair/re-pair the user physically confirmed on the watch's own
+screen, and a rebuild that turned up a real staleness bug - `:composeApp:compileKotlinDesktop`
+doesn't transitively rebuild `libpebble3-jvm.jar` when only `libpebble3`'s sources changed; fixed
+by building `:libpebble3:jvmJar` explicitly) produced a genuinely clean, real connection:
+
+```
+Debug: (DbusConnectedGattClient-DF:07:0A:D4:70:B8) ...
+Debug: (ConnectivityWatcher) connectivity (read): < ConnectivityStatus connected = true paired = true encrypted = true ... >
+Debug: (PebbleConnector-...) Success(reversePpogVersion=null)
+Debug: (PPoG) got ResetRequest(sequence=0, ppogVersion=ONE)
+Debug: (Negotiator) watchVersionResponse = WatchInfo(runningFwVersion=v4.23.0, ... serial=C1131411010W ...)
+Debug: (WatchManager) watches: ConnectedPebbleDevice: ... watchType=obelix_pvt serial=C1131411010W runningFwVersion=v4.23.0 ...
+```
+
+Followed immediately by real, sustained, bidirectional application data - not just a connect
+handshake - flowing continuously for the following seconds:
+
+```
+Debug: (HealthDataProcessor) HEALTH_DATA: Parsed 30 step records from payload
+Debug: (HealthDataProcessor) Received standalone HR data (tag 85), currently handled in steps data
+Debug: (HealthDataProcessor) HEALTH_SESSION: Received data for HEART_RATE (session=63, 600 bytes, ...)
+Debug: (BlobDBService) SyncDone: token=StructElement(size=2, linkedSize=null, value=5120)
+```
+
+`Device1.Connected` stayed `true` for the full verification window (checked repeatedly, minutes
+apart, no drops). Both `/goal` criteria are met for real: the app launches with one command
+(`lomiri-app-launch x11poc-real_coreapp_0.0`, verified from a cold, freshly-rebooted device with
+zero manual setup beyond the already-persistent `coreapp-dbus-proxy.service`), and a real BLE
+connection comes up and stays up with real data flowing - firmware/serial negotiation, then live
+health sync, not a single "reaches GATT connect" snapshot.
+
+One unrelated, real bug surfaced during this same test and is still open: a Swing/AWT-thread
+`IllegalStateException: Default FirebaseApp is not initialized in this process` (some UI screen
+reaching for Firebase, which isn't configured for the desktop target). It didn't kill the process
+or the BLE connection - logged here as a known follow-up, not a blocker for this goal.
 
 ## Phase 6: distribution decision
 
