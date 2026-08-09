@@ -8,7 +8,8 @@ completed" below). Phase 1-3's real remaining risk (does the JVM BLE stack actua
 watch) has moved from "unknown" to "known, narrow, Bluetooth-level" — see "Beyond Phase 4: real BLE
 against real hardware". Phase 5's `lomiri-app-launch` crash is now root-caused precisely (a real
 upstream library bug, unrelated to this app - see "Phase 5" below) rather than just reproduced.
-Phase 6 (distribution) is still not started.
+Phase 6 now has a real, reasoned recommendation (X11-as-Click over Libertine, see "Phase 6,
+decided" below) - not yet implemented, but a genuine decision rather than an open question.
 
 ## Goal
 
@@ -771,10 +772,11 @@ keeps running correctly either way, so a production Click/system-deb build would
 tolerate (or itself catch/ignore) this CLI wrapper's own post-success crash, not work around a
 launch failure.
 
-## Phase 6 (not started)
+## Phase 6: distribution decision
 
-Distribution decision remains exactly as scoped in the original roadmap — untouched. Its option
-set is now better understood, though (see below) — it isn't just "Libertine vs. QML rewrite".
+A real recommendation now exists (see "Phase 6, decided" below): X11-packaged-as-Click over
+Libertine, with a privileged helper daemon for the BLE work. Not yet implemented - this is a
+decision with reasoning, not a shipped package.
 
 ## Phase 6, revisited: a genuine third distribution option — X11 packaged as a Click
 
@@ -848,6 +850,57 @@ from using the Click format; and X11 graphics acceleration can be limited on lib
 ports, which historically makes heavyweight rendering stacks (browsers, Electron) expensive —
 worth checking whether Skiko/Skia's rendering path is affected the same way, since it's a
 comparable weight class to what makes Electron problematic there.
+
+## Phase 6, decided: X11-as-Click over Libertine
+
+**A finding from the real BLE work changes the comparison above materially.** The table framed
+Libertine as "existing packages may run unchanged" against Click's "paths, confinement, UI often
+need fixes" — implying Libertine is the lower-engineering-cost path. That's no longer true for
+this app specifically: getting real system D-Bus access to BlueZ required real, non-trivial
+engineering *inside Libertine too* - a two-hop socket proxy (one process outside the sandbox, one
+inside, because Libertine's own bwrap sandbox blocks `/run/dbus` even though it's otherwise
+unconfined), which itself had a real bug (a connection fd/task leak) that took real debugging to
+find. Libertine's unconfined-ness turned out not to mean "no privileged-bridge work needed" - it
+meant "the privileged-bridge work is a sandbox-plumbing problem instead of an AppArmor-policy
+problem." Once that's true, Click's AppArmor-policy version of the same problem
+(`linux-auto`'s write-to-own-directory pattern, already proven working in a sibling project) isn't
+a bigger engineering lift than what Libertine already needed - it's a comparable one, with a real
+upside Libertine doesn't have: a normal, OpenStore-distributable, AppArmor-confined app instead of
+something living inside a container the user has to separately install and maintain.
+
+**Recommendation: X11-packaged-as-Click, with a `linux-auto`-style privileged helper for the BLE
+work**, not Libertine. Concretely:
+
+- The confined UI Click bundles the composeApp desktop build + JRE (or links against a
+  runtime-provided one, TBD), launched via `X-Ubuntu-XMir-Enable=true` - the exact Xwayland/X11
+  rendering path already proven twice this session (`xclock`/`xev`, then the real app).
+- A separate, `.deb`-installed, system-bus-privileged helper daemon does the real work already
+  proven tonight: `busctl`-style BlueZ calls, the GATT server companion process, GATT client
+  connection handling. This is genuinely *less* code than it sounds - `BusctlDbus.jvm.kt`,
+  `LinuxBleScanner.jvm.kt`, `GattServer.jvm.kt`'s Python companion, and `KableGattClient.jvm.kt`
+  already contain the real, working logic; the helper's job is running that logic somewhere with
+  real D-Bus access, not rewriting it.
+- The confined Click talks to the helper via `linux-auto`'s proven pattern: writes into its own
+  writable directory (always permitted, no policy group needed), a root-owned systemd path unit
+  notices and acts, status returns the same way. Matches what a Click reviewer will accept -
+  `ut-sonic-player`'s custom-policygroup alternative is a real reviewer red flag for exactly the
+  kind of broad D-Bus access this app needs.
+- This sidesteps the discovered Libertine-specific problems entirely (the `/run/dbus` sandbox
+  block, the `?`-directory `user.home` bug, per-invocation-private `/run` tmpfs breaking
+  multi-process coordination) rather than needing workarounds for them in a shipped product - all
+  three were real, working-hours-costly things to debug this session specifically because
+  Libertine's sandbox shape doesn't match what a normal system D-Bus client expects.
+
+**Not yet done, the real next engineering steps for this path**: cross-compiling/bundling the JRE
++ app into a `.click` (this session only ever ran it live from an interactive `libertine-launch`
+shell, never packaged); writing the real systemd path-unit + privileged-helper daemon (a genuine
+rewrite of tonight's proven `busctl`/GATT-companion logic into a long-running service, not the
+short-lived per-launch processes used for testing); the actual AppArmor policy/entry point for the
+write-to-own-directory IPC; and checking whether Skiko/Skia rendering is viable on this device's
+real GPU driver stack under Click confinement the same way it was under Libertine (the session so
+far only tested Libertine's Xwayland path, not a confined one - `MESA: error: ZINK: failed to
+choose pdev` / software-rendering fallback was already needed even in the unconfined case, so this
+needs real verification, not an assumption that confinement is the only variable).
 
 ## Phases
 
