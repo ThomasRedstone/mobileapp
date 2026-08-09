@@ -209,6 +209,10 @@ buildkonfig {
         buildConfigField(FieldSpec.Type.STRING, "KIRINKI_URL", gradleStringPropOrNull("kirinkiUrl"), nullable = true)
         buildConfigField(FieldSpec.Type.STRING, "MEMFAULT_TOKEN", gradleStringPropOrNull("memfaultToken"), nullable = true)
         buildConfigField(FieldSpec.Type.STRING, "GOOGLE_CLIENT_ID", gradleStringPropOrNull("googleClientId"), nullable = true)
+        // A separate "Desktop app" OAuth client: the loopback redirect the desktop sign-in flow
+        // uses can't be registered against the Web client GOOGLE_CLIENT_ID names.
+        buildConfigField(FieldSpec.Type.STRING, "GOOGLE_DESKTOP_CLIENT_ID", gradleStringPropOrNull("googleDesktopClientId"), nullable = true)
+        buildConfigField(FieldSpec.Type.STRING, "GOOGLE_DESKTOP_CLIENT_SECRET", gradleStringPropOrNull("googleDesktopClientSecret"), nullable = true)
         buildConfigField(FieldSpec.Type.BOOLEAN, "GOOGLE_AUTH_ENABLED", gradleBooleanProp("googleAuthEnabled", default = true).toString())
         buildConfigField(FieldSpec.Type.BOOLEAN, "APPLE_AUTH_ENABLED", gradleBooleanProp("appleAuthEnabled", default = true).toString())
         buildConfigField(FieldSpec.Type.BOOLEAN, "GITHUB_AUTH_ENABLED", gradleBooleanProp("githubAuthEnabled", default = true).toString())
