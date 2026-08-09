@@ -14,12 +14,13 @@ import coredevices.coreapp.di.desktopModule
 import coredevices.coreapp.di.utilModule
 import coredevices.coreapp.ui.App
 import coredevices.coreapp.util.initLogging
+import coredevices.pebble.PebbleAppDelegate
 import coredevices.pebble.watchModule
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 
 fun main() {
-    startKoin {
+    val koinApp = startKoin {
         modules(
             desktopModule,
             apiModule,
@@ -31,6 +32,9 @@ fun main() {
         )
     }
     initLogging()
+    // Android's MainApplication.onCreate() is the only other place this gets called - nothing
+    // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
+    koinApp.koin.get<PebbleAppDelegate>().init()
 
     application {
         // WindowPlacement.Maximized resizes the outer AWT frame under this Xwayland/Mir XWM
