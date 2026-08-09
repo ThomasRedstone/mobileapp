@@ -358,7 +358,7 @@ class DbusConnectedGattClient(
     }
 }
 
-private fun List<String>.asPropertiesBitmask(): Int {
+internal fun List<String>.asPropertiesBitmask(): Int {
     var bitmask = 0
     if ("broadcast" in this) bitmask = bitmask or 0x01
     if ("read" in this) bitmask = bitmask or 0x02
