@@ -646,12 +646,10 @@ took a chain of real, distinct bugs, each confirmed by a real run on the real Fa
 
 With all of that, the app genuinely renders its real screens (Onboarding → WatchHome →
 Watches/Notifications/Watchfaces tabs, Settings, Locker) with real navigation, at a real,
-phone-appropriate size. Known, deliberately out-of-scope-for-now gaps: Google/GitHub/Apple sign-in
-are honest no-op stubs on desktop (no CredentialManager/OAuth browser flow implemented yet); the
-Firestore-backed Firebase Auth JVM SDK needs a real `FirebaseApp.initializeApp()` call with real
-project config to stop crashing the Settings screen (not attempted — needs real credentials
-decision, not a quick stub); bottom nav icon labels are visually clipped a little (a minor,
-unfixed density/layout mismatch).
+phone-appropriate size. Known, deliberately out-of-scope-for-now gaps: Apple/GitHub sign-in are
+honest no-op stubs on desktop; Firebase initialization and the Google sign-in flow are addressed in
+"Firebase on desktop" below (Google's is implemented, Apple's and GitHub's are not); bottom nav icon
+labels are visually clipped a little (a minor, unfixed density/layout mismatch).
 
 ## Beyond Phase 4: real BLE against real hardware
 
@@ -1125,6 +1123,107 @@ real GPU driver stack under Click confinement the same way it was under Libertin
 far only tested Libertine's Xwayland path, not a confined one - `MESA: error: ZINK: failed to
 choose pdev` / software-rendering fallback was already needed even in the unconfined case, so this
 needs real verification, not an assumption that confinement is the only variable).
+
+## Firebase on desktop: real initialization, and a real Google sign-in flow
+
+Closing the gap the Phase 4 section flagged as "needs a real credentials decision, not a quick
+stub". Two separate problems were tangled together under "sign-in doesn't work on desktop":
+
+**1. The crash — Firebase was never initialized at all.** `WatchSettingsScreen.kt:334` reads
+`Firebase.auth.authStateChanged` unconditionally while composing (to show the signed-in email), so
+merely opening watch settings threw `IllegalStateException: Default FirebaseApp is not initialized
+in this process`. On Android a manifest-registered `ContentProvider` auto-initializes Firebase and
+on iOS `FirebaseApp.configure()` runs from the app delegate; on desktop nothing did, and
+`LibPebbleModule.jvm.kt`'s deliberately-minimal `platformModule` never wired it up.
+
+Found the real mechanism rather than guessing: the JVM variant of `dev.gitlive:firebase-auth`
+resolves (per its own POM) to `dev.gitlive:firebase-java-sdk`, which reimplements the Android
+Firebase API on plain JVM — which is why the stack trace shows `com.google.firebase.FirebaseApp`
+and `dev.gitlive.firebase.auth.android.getAuth` on a machine with no Android on it. Decompiled the
+jar to confirm what it actually needs, instead of assuming the Android path: a
+`FirebasePlatform` (its stand-in for `SharedPreferences`) installed *before* anything else, plus
+explicit `FirebaseOptions` — `FirebaseOptions.fromResource(Context)` exists but has no
+`google-services.json` to read on this platform.
+
+Implemented in `composeApp/src/desktopMain/.../firebase/`:
+
+- `GoogleServicesConfig.kt` — parses the real `google-services.json`, the same file the Android
+  build consumes via the google-services Gradle plugin. It explicitly **rejects the committed
+  `google-services-dummy.json`**: every field there is the literal string `replaceme`, which would
+  otherwise parse "successfully" and then fail much later inside Firebase with an opaque error.
+- `DesktopFirebase.kt` — `initializeFirebase()` locates the config (`$COREAPP_GOOGLE_SERVICES`, then
+  `$XDG_CONFIG_HOME/coreapp/google-services.json`, then a bundled resource), installs a
+  file-backed `FirebasePlatform`, and calls `Firebase.initialize(...)`. Called from `Main.kt`
+  alongside `initLogging()`.
+- `composeApp/build.gradle.kts` copies `androidApp/src/google-services.json` into the desktop
+  resources when it exists (it's gitignored, per README.md), so a developer with the real Android
+  config needs no extra step.
+- Storage is file-per-key under `$XDG_DATA_HOME/coreapp/firebase` rather than the app's own
+  `Settings`: on JVM `Settings()` is `java.util.prefs`, whose 8KB-per-value limit the persisted-user
+  blob (ID + refresh tokens) can exceed. Persistence is what makes the signed-in session survive a
+  restart, so this is load-bearing, not incidental.
+
+**Deliberately not swallowed:** if no config is found, the app logs an error naming every location
+it looked at and carries on. It does not silently no-op, and it does not fake a `FirebaseApp` — the
+settings screen will still fail, exactly as loudly as before, because the missing thing is real
+project config and nothing in the code can substitute for it.
+
+**2. Sign-in — the Android mechanism has no desktop equivalent.** `GoogleAuthUtil.desktop.kt`
+returned `null` unconditionally, which is why the button did nothing. Android uses Credential
+Manager + GMS; there is no such thing on Libertine/X11. Replaced with Google's documented OAuth 2.0
+flow for installed apps: PKCE (S256) + the system browser (via the existing `Platform.openUrl`,
+already implemented on desktop as `java.awt.Desktop.browse`) + a loopback `HttpServer` on a random
+port to catch the redirect, then a code-for-token exchange whose `id_token` becomes the existing
+`GoogleAuthProvider.credential(...)`. Nothing in the shared auth data model changed — `SignInButton`,
+`signInWithCredential`, the anonymous-account linking path and the account-switch dialog are all
+untouched; only the platform-specific credential *acquisition* is new.
+
+**What this needs before it can work end-to-end, and why it isn't verified:** a Google OAuth client
+of type **"Desktop app"**, wired in as `googleDesktopClientId`/`googleDesktopClientSecret` (new
+`CommonBuildKonfig` fields, empty in `gradle.properties` like the existing `googleClientId`). The
+existing `googleClientId` cannot be reused: it's a Web client, and Web clients require every
+redirect URI registered up front *including the port* — incompatible with the random loopback port
+this flow binds. This repo has no real Firebase project config and no real client credentials
+(`googleClientId=` is empty; only the dummy `google-services.json` is committed), so **a real
+browser round trip against Google was never performed here.** Rather than pretend otherwise, the
+build-config check throws a message naming the missing property, which surfaces in the sign-in
+dialog's own error text. The remaining hard parts, in the order they'll bite:
+
+1. The desktop OAuth client must live in the **same GCP project** as the Firebase app, or Firebase
+   will reject the `id_token`'s audience.
+2. Google Sign-In must be enabled as a provider in the Firebase console for that project.
+3. On Ubuntu Touch, `Desktop.browse` inside the Libertine bwrap sandbox has *not* been tested —
+   given this investigation's own history with `/run` being tmpfs'd inside the sandbox, whether a
+   browser can be launched out of it at all is an open question, and the fallback (print the URL
+   and let the user open it on another device, pasting nothing back) doesn't fit a loopback
+   redirect. This is the most likely place the flow breaks first on real hardware.
+
+**What was verified, locally, for real:** `:composeApp:desktopTest` — 33 tests, all passing. Beyond
+the pure unit tests (`google-services.json` parsing including dummy rejection, PKCE derivation
+against RFC 7636's own worked example, auth-URL construction, redirect parsing with state-mismatch
+and consent-declined cases), two are genuine integration checks rather than assertions about
+intent: one starts the real loopback server, drives a real HTTP request through it, and asserts the
+parsed code comes back; the other calls `initializeFirebase(...)` and asserts `Firebase.auth`
+is reachable afterwards — i.e. it directly reproduces and then disproves the reported crash.
+
+**Two pre-existing breakages found on the way, both real:**
+
+- `CoreDeepLinkHandlerTest` (commonTest) had not compiled since the `ExperimentalDevicesFacade`
+  refactor — it constructed `CoreDeepLinkHandler()` with no arguments and imported `RingRoutes`
+  from `:experimental`, which has no jvm target. Rewritten to use a fake facade and literal deep
+  link URIs, which is the same direction the refactor took the production code (which duplicates
+  those constants deliberately, rather than depend on `:experimental`).
+- `desktopTestRuntimeClasspath` hit the JCEF/jogamp resolution failure the existing kcef exclusion
+  was meant to prevent; that exclusion matched only `desktopRuntimeClasspath` by substring, so the
+  test configuration was never covered. Widened to both names explicitly.
+
+**Not fixed, and out of scope here:** `:composeApp:compileAndroidHostTest` fails on this branch
+independently of any of the above (`:libindex:compileAndroidMain` — "Extending sealed classes or
+interfaces from a different module is prohibited" in `mobileMain/RealIndexDevice.kt`, plus a
+`firebase-crashlytics` jvm-variant resolution error). Confirmed pre-existing by stashing all of
+this work and reproducing it on a clean tree. It means the Android-side compile of the shared test
+change above could not be verified — though the rewritten test now references only commonMain
+types, and the version it replaced compiled on no platform at all.
 
 ## Phases
 
