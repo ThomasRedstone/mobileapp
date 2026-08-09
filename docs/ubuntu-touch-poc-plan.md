@@ -10,6 +10,9 @@ against real hardware". Phase 5's `lomiri-app-launch` crash is now root-caused p
 upstream library bug, unrelated to this app - see "Phase 5" below) rather than just reproduced.
 Phase 6 now has a real, reasoned recommendation (X11-as-Click over Libertine, see "Phase 6,
 decided" below) - not yet implemented, but a genuine decision rather than an open question.
+**Phase 1 is now genuinely resolved, not worked around**: a real JVM-native D-Bus library
+(`hypfvieh/dbus-java`) authenticates against the real system bus and reads real BlueZ properties -
+see "Phase 1, resolved" below.
 
 ## Goal
 
@@ -734,6 +737,52 @@ client identifier construction, the connection attempt itself) has now been prov
 correctly against the real Pebble Time 2, at least up to the point of establishing a live BLE
 link. What remains is a real, narrow Bluetooth-layer question - not an unknown infrastructure
 problem anymore.
+
+## Phase 1, resolved: a real JVM-native D-Bus library, genuinely working
+
+Everything above used `busctl` via `ProcessBuilder` - option 2 of Phase 1's three ranked
+alternatives, chosen because option 1 (a real JVM D-Bus library) was root-caused earlier this
+investigation as broken (`dbus-java`'s `EXTERNAL` SASL auth sends UID 0 instead of the real process
+UID, so BlueZ rejects it) without a known fix. That fix now exists, found and verified for real:
+
+**The real root cause was always fixable - the auto-detected UID was wrong, not the auth mechanism
+itself.** Searched for this exact failure mode rather than re-deriving it from scratch:
+`hypfvieh/dbus-java` (the actively maintained fork, not the abandoned original freedesktop.org
+one) added `SaslConfigBuilder.withSaslUid(Long)` in PR #178 specifically for cases where automatic
+UID detection is wrong - exactly this situation, plausibly the same broken UID→passwd lookup
+already root-caused elsewhere this session (the literal-`?`-in-paths `user.home` bug) affecting
+`dbus-java`'s own UID auto-detection the same way.
+
+**Verified for real, in two stages, on the real device:**
+1. Fetched real `dbus-java-core-5.2.0` + `dbus-java-transport-junixsocket-5.2.0` (+ `junixsocket`
+   transitive deps) from Maven Central - `dbus-java-transport-junixsocket` specifically because its
+   README notes real GATT-server-relevant capability (file descriptor passing) that the other
+   transport options don't have without extra dependencies, relevant if this library eventually
+   replaces `GattServer.jvm.kt`'s Python companion too.
+2. `DBusConnectionBuilder.forSystemBus()` with no UID override reproduced the exact known-broken
+   behavior (`AuthenticationException: Failed to authenticate`) - confirms this is the same bug,
+   not a new one.
+3. `.transportConfig().configureSasl().withSaslUid(32011).back()` (the real sandbox UID) then
+   **authenticated successfully** (`CONNECTED. Unique name: :1.5137`) and made a real method call -
+   `org.bluez.Adapter1`'s `Powered`/`Name` properties read back `true` / `"Fairphone 4"`, matching
+   exactly what `busctl` had already shown all session.
+
+**Important nuance - this doesn't eliminate the D-Bus proxy.** The proxy solves a different,
+Libertine-sandbox-specific problem (`/run/dbus` not existing inside the bwrap sandbox at all,
+regardless of which client library is asking); `dbus-java`'s fix solves the SASL authentication
+problem. Both tests above still went through `DBUS_SYSTEM_BUS_ADDRESS` pointed at the working
+proxy socket - a real JVM D-Bus library still needs the same socket-reachability bridge inside
+Libertine. What it *does* eliminate is `busctl`'s `ProcessBuilder` subprocess-exec dependency,
+which matters concretely for the Phase 6 Click-packaging decision: a confined app spawning
+arbitrary subprocesses is a real AppArmor red flag in a way that in-process D-Bus calls aren't, so
+this closes a real gap in that recommendation.
+
+**Not yet done**: migrating `BusctlDbus.jvm.kt`/`LinuxBleScanner.jvm.kt`'s scan-and-property-read
+logic to real `dbus-java` calls instead of parsing `busctl`'s text output (this is real,
+mechanical follow-up work, not exploratory - the properties and method names are already known
+from the working `busctl` commands); evaluating whether `dbus-java`'s object-export API can
+replace `GattServer.jvm.kt`'s Python companion process for the local GATT server side, given the
+junixsocket transport's file-descriptor-passing support was specifically chosen with this in mind.
 
 ## Phase 5: `lomiri-app-launch` crash, root-caused (not fixed - it's upstream)
 
