@@ -277,6 +277,14 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "coredevices.coreapp.MainKt"
+
+        // Phase 6 (docs/ubuntu-touch-poc-plan.md): produces a self-contained app directory
+        // (jars + a jlink-trimmed JRE) via jpackage, which a Click package wraps directly -
+        // no target format set, since we package the Click ourselves rather than using
+        // jpackage's own .deb/.rpm output.
+        nativeDistributions {
+            packageName = "coreapp"
+        }
     }
 }
 
