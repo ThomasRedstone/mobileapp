@@ -88,8 +88,11 @@ internal data class BluezDevice(
 internal object BluezObjectParser {
     // Matches one `/org/bluez/hci0/dev_XX_XX_.../serviceNNNN` style path and
     // captures everything up to the next top-level object path, so property
-    // extraction below can be scoped per-device.
-    private val devicePathRegex = Regex(""""(/org/bluez/hci\d+/dev_[0-9A-Fa-f_]+)"\s+\d+\s+"org\.bluez\.Device1"""")
+    // extraction below can be scoped per-device. BlueZ always lists other interfaces (at
+    // minimum org.freedesktop.DBus.Introspectable) before org.bluez.Device1, so this can't
+    // require it immediately after the path - [^/]*? skips over those without crossing into
+    // the next top-level object path (which always starts with '/').
+    private val devicePathRegex = Regex(""""(/org/bluez/hci\d+/dev_[0-9A-Fa-f_]+)"[^/]*?"org\.bluez\.Device1"""")
     private val addressRegex = Regex(""""Address"\s+s\s+"([0-9A-Fa-f:]+)"""")
     private val nameRegex = Regex(""""Name"\s+s\s+"([^"]*)"""")
     private val rssiRegex = Regex(""""RSSI"\s+n\s+(-?\d+)""")
