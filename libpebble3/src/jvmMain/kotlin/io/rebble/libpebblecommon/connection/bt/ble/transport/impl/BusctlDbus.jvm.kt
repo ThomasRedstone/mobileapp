@@ -81,6 +81,7 @@ internal data class BluezDevice(
     val address: String?,
     val name: String?,
     val rssi: Int?,
+    val bonded: Boolean,
     val manufacturerData: Map<Int, ByteArray>,
 )
 
@@ -92,6 +93,7 @@ internal object BluezObjectParser {
     private val addressRegex = Regex(""""Address"\s+s\s+"([0-9A-Fa-f:]+)"""")
     private val nameRegex = Regex(""""Name"\s+s\s+"([^"]*)"""")
     private val rssiRegex = Regex(""""RSSI"\s+n\s+(-?\d+)""")
+    private val bondedRegex = Regex(""""Bonded"\s+b\s+(true|false)""")
     // busctl prints ManufacturerData as: "ManufacturerData" a{qv} <count> <code> ay <len> <b0> <b1> ...
     private val manufacturerDataBlockRegex = Regex(""""ManufacturerData"\s+a\{qv\}\s+(\d+)\s+(.*)""")
 
@@ -107,6 +109,7 @@ internal object BluezObjectParser {
                 address = addressRegex.find(block)?.groupValues?.get(1),
                 name = nameRegex.find(block)?.groupValues?.get(1),
                 rssi = rssiRegex.find(block)?.groupValues?.get(1)?.toIntOrNull(),
+                bonded = bondedRegex.find(block)?.groupValues?.get(1) == "true",
                 manufacturerData = parseManufacturerData(block),
             )
         }
