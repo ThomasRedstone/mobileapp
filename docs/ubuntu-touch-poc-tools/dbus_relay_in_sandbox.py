@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Forwards a Unix socket to the real system D-Bus socket.
+"""Runs INSIDE the Libertine sandbox. Creates /run/dbus/system_bus_socket
+(the well-known path native D-Bus clients hardcode, ignoring
+DBUS_SYSTEM_BUS_ADDRESS) and forwards connections to the outer proxy at
+/run/user/<uid>/dbus-system-proxy.sock, which IS visible inside the sandbox
+(bind-mounted) and which dbus_proxy.py (running outside, on the real host)
+forwards on to the real /run/dbus/system_bus_socket.
 
-Run on the real host (outside the Libertine bwrap sandbox), listening on a
-path under /run/user/<uid>/ - that directory IS bind-mounted into the
-sandbox, whereas /run/dbus is not (the sandbox uses --tmpfs /run). Point
-DBUS_SYSTEM_BUS_ADDRESS at the listen path from inside the sandbox.
+Must run inside the same `libertine-launch` invocation as the app it's
+serving: each invocation gets its own private /run tmpfs, so a relay
+started in one invocation is invisible to an app started in another.
 """
 import asyncio
 import os
 import sys
 
-LISTEN_PATH = sys.argv[1] if len(sys.argv) > 1 else "/run/user/32011/dbus-system-proxy.sock"
-TARGET_PATH = sys.argv[2] if len(sys.argv) > 2 else "/run/dbus/system_bus_socket"
+LISTEN_PATH = "/run/dbus/system_bus_socket"
+TARGET_PATH = sys.argv[1] if len(sys.argv) > 1 else "/run/user/32011/dbus-system-proxy.sock"
 
 
 async def pipe(reader, writer, other_writer):
@@ -25,11 +29,8 @@ async def pipe(reader, writer, other_writer):
     except (ConnectionResetError, BrokenPipeError, OSError):
         pass
     finally:
-        # A D-Bus connection is commonly idle in one direction while active in the
-        # other - if we only close our own writer here, the other pipe() task stays
-        # blocked forever on its still-open peer, leaking the fd/task pair on every
-        # connection until the process runs out of descriptors (seen as later
-        # connections getting refused).
+        # See dbus_proxy.py - closing only our own side leaks the peer's fd/task
+        # forever if it's blocked waiting on data that will never come.
         writer.close()
         other_writer.close()
 
@@ -49,11 +50,12 @@ async def handle(client_reader, client_writer):
 
 
 async def main():
+    os.makedirs(os.path.dirname(LISTEN_PATH), exist_ok=True)
     if os.path.exists(LISTEN_PATH):
         os.remove(LISTEN_PATH)
     server = await asyncio.start_unix_server(handle, path=LISTEN_PATH, backlog=256)
     os.chmod(LISTEN_PATH, 0o666)
-    print(f"proxying {LISTEN_PATH} -> {TARGET_PATH}", flush=True)
+    print(f"relaying {LISTEN_PATH} -> {TARGET_PATH}", flush=True)
     async with server:
         await server.serve_forever()
 
