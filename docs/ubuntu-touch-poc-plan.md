@@ -1385,6 +1385,48 @@ this work and reproducing it on a clean tree. It means the Android-side compile 
 change above could not be verified — though the rewritten test now references only commonMain
 types, and the version it replaced compiled on no platform at all.
 
+## Reconnect stalls after a real disconnect: the watch doesn't advertise while unconnected, and generic scanning can't fix that
+
+The usable-app goal was achieved (real connection, real data flowing — see above), but connections
+don't *stay* up indefinitely. After a genuine BLE-level disconnect (BlueZ itself reports
+`PropertiesChanged Connected=false` — not an app exception, not a leak), reconnection sometimes
+takes a very long time: `Device1.Connect()` fails repeatedly with `org.freedesktop.dbus.errors.NoReply`
+for anywhere from a couple of minutes to over 20 minutes before a retry finally succeeds.
+
+**Ruled out, with real evidence, not assumption:**
+- **D-Bus connection leak on failed `connect()` attempts** — the original suspicion. Refuted: fd
+  count on the running JVM process stayed flat (~6 sockets total) through 80+ failed retries, and
+  the journal shows `DbusGattConnector.disconnect()` firing cleanly on every single cycle.
+- **Wedged HCI-level link / degraded adapter state** — found and cleared one stale LE link stuck
+  "in progress" at the controller level, and separately did a full `Adapter1.Powered` off/on
+  cycle. Neither changed the failure pattern at all.
+- **Bonding/pairing state** — stayed healthy (`Bonded=true`) throughout.
+
+**Root cause, confirmed empirically and matched against existing code:** the watch genuinely isn't
+visible to general BLE discovery while disconnected. Ran `Adapter1.StartDiscovery()` continuously
+for 36+ seconds during an active failure streak — the device's `RSSI` property (only ever set by
+BlueZ from a real received advertisement) never appeared once, despite the watch being right next
+to the phone and having connected successfully minutes earlier.
+
+This isn't a gap our code can close by scanning harder or longer — `PebbleBle.kt`'s
+`advertisesWhenNotConnected()` already encodes this as known behavior:
+`WatchType.EMERY`/`FLINT`/`GABBRO` (which `CORE_OBELIX_PVT`, i.e. this Pebble Time 2, maps to)
+return `false`, versus `true` for the old Aplite/Basalt/Chalk/Diorite generation. The existing
+`PreConnectScanner` "scan until seen, then connect" mechanism is deliberately skipped for exactly
+this watch class, for exactly this reason: modern Core watches don't do general discoverable
+advertising while disconnected, almost certainly using directed/whitelist-filtered advertising
+visible only to `Device1.Connect()`'s own internal BlueZ/HCI procedure, not to
+`Adapter1.StartDiscovery()`. How often the watch actually transmits that directed advertisement is
+a firmware-side duty cycle — invisible and uncontrollable from the host.
+
+**Decision: work with this design, not against it.** Implementing app-level continuous background
+scanning (as originally proposed) was considered and dropped once this was found — it would spin
+indefinitely seeing nothing, for the same reason the manual 36-second test saw nothing. The
+existing `Device1.Connect()`-only reconnect loop is already the correct mechanism for this watch
+class; the honest remaining gap is that its retries are patient (~22s apart, indefinite) but not
+fast, and there's no known host-side lever to shorten the watch's own advertising duty cycle. This
+is being left as a known, understood limitation rather than a bug to keep chasing tonight.
+
 ## Roadmap, tracked but not started: phone-integration features need real Ubuntu Touch wiring
 
 Flagged explicitly so it doesn't get lost, not because it's next up. `LibPebbleModule.jvm.kt`'s
