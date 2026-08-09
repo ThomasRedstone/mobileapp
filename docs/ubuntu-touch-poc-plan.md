@@ -1124,6 +1124,63 @@ far only tested Libertine's Xwayland path, not a confined one - `MESA: error: ZI
 choose pdev` / software-rendering fallback was already needed even in the unconfined case, so this
 needs real verification, not an assumption that confinement is the only variable).
 
+## Phase 6, superseded: a reserved `"bluetooth"` AppArmor policy group needs no helper at all
+
+Everything below this point (the `linux-auto` precedent, the Unix-socket-vs-file-poll analysis)
+was solved for a two-part Click-plus-privileged-`.deb`-helper architecture. That whole split turns
+out to be unnecessary. A set of docs the user provided (`docs/ubuntu-touch-bluetooth-confinement.md`,
+`-current-concerns.md`, `-journey.md` — explicitly flagged by the user as unverified, written by
+some other process, not to be trusted blindly) claimed Ubuntu Touch has a reserved AppArmor policy
+group named `"bluetooth"` that grants a confined Click direct, unrestricted D-Bus access to BlueZ.
+**Verified for real, independently, on this device** rather than taking the doc's word for it:
+
+```
+$ find / -iname policygroups -type d
+/usr/share/apparmor/easyprof/policygroups   # real, from the click-apparmor package
+
+$ find /usr/share/apparmor/easyprof/policygroups -iname '*bluetooth*'
+/usr/share/apparmor/easyprof/policygroups/ubuntu/2404.1/bluetooth   # exists, matches our framework version
+/usr/share/apparmor/easyprof/policygroups/ubuntu/2404.2/bluetooth
+
+$ cat .../ubuntu/2404.1/bluetooth
+# Description: Use bluetooth (bluez5) as an administrator.
+# Usage: reserved
+network bluetooth,
+dbus (receive, send)
+    peer=(name="org.bluez{,.*}", label=unconfined),
+dbus (receive)
+    path=/org/bluez/**
+    peer=(label=unconfined),
+dbus (receive)
+    bus=system
+    path=/
+    interface="org.freedesktop.DBus.{ObjectManager,Properties}"
+    member="{InterfacesAdded,InterfacesRemoved}"
+    peer=(label=unconfined),
+```
+
+Real and exactly as broad as claimed — this is genuinely unrestricted `org.bluez` D-Bus access
+(send *and* receive, any member, any bluez object path) plus raw `network bluetooth` capability,
+from inside a confined Click, with zero extra daemon. `"Usage: reserved"` matches the doc's OpenStore
+manual-review claim — `click-apparmor`'s own vocabulary for "needs a human reviewer, not
+auto-approved," not an OS-level restriction. Sideloading (`click install` / `pkcon
+install-local`) enforces the same profile the same way regardless of store review status, which
+tracks with how every other Click on this device (`linux-auto`, `sonic-player`, etc.) is already
+installed and running outside any store.
+
+**This changes the recommendation**: single Click package, `policy_groups: ["bluetooth"]`
+(possibly also `"networking"` if outbound HTTP is needed elsewhere in the app, matching
+`sonic-player`'s combination), running tonight's proven `DbusGattClient.jvm.kt` directly inside
+the confined process. No privileged `.deb` helper, no systemd path-unit IPC, no Unix-socket
+design question, no two-part-install UX problem, no "OTA update wipes the deb" risk — all real
+problems the two-part architecture had that this makes moot.
+
+**Still needs real verification, not assumption** (same discipline as the two-part plan needed):
+this profile is BlueZ-D-Bus-shaped, not proven yet against *this app's specific* two-hop-proxy-free
+D-Bus reality - nothing here has been tested from inside an actual confined Click on this device;
+it's a real, read policy file, not a real successful `Device1.Connect()` from inside one. That's
+the concrete next step, not landing the two-part architecture this section replaces.
+
 ## Phase 6, real precedent found: `linux-auto`'s privileged-helper pattern, and its real limit
 
 The "not yet done" list above named a real AppArmor policy/entry point for the confined-Click
