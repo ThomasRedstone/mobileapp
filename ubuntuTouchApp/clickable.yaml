@@ -9,10 +9,11 @@ builder: custom
 framework: ubuntu-touch-24.04-1.x
 
 build:
-  - chmod +x $ROOT/coreapp/bin/coreapp $ROOT/coreapp/lib/libapplauncher.so
+  - chmod +x $ROOT/coreapp/bin/coreapp $ROOT/coreapp/lib/libapplauncher.so $ROOT/coreapp-launch.sh
 
 install_root_data:
   - manifest.json
   - coreapp.apparmor
   - coreapp.desktop
+  - coreapp-launch.sh
   - coreapp
