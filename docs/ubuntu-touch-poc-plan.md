@@ -1182,6 +1182,51 @@ which the profile already grants in full on `$XDG_RUNTIME_DIR/@{APP_PKGNAME}/` -
 to just work the same way. Still genuinely untested against a live running confined Click with an
 actual socket open, which is the real next step, not proof.
 
+## One screen's exception should not kill the app (and the live BLE session)
+
+The Firebase crash below did more than break the settings screen: it took down the entire desktop
+app, and with it a live BLE connection to the real watch. An unscaled native error dialog appeared,
+and dismissing it closed everything. The user's framing is the right one — "I don't think a firebase
+issue should kill the app!" — so this is the general fix, independent of Firebase.
+
+**Root-caused by decompiling Compose, not by guessing.** `androidx.compose.ui.window
+.DefaultWindowExceptionHandlerFactory` (ui-desktop 1.11.1) does exactly two things with an
+exception escaping composition: `showErrorDialog(window, throwable)`, then
+`window.dispatchEvent(WindowEvent(window, WINDOW_CLOSING))`. Since `application {}` returns once
+its last window closes, and `main()` ends there, dismissing that dialog *is* what exits the JVM.
+That explains the reported behaviour precisely — the dialog isn't merely a symptom shown before an
+unrelated crash, the close is the handler's own designed behaviour.
+
+Two layers, in `UncaughtExceptions.kt`, wired from `Main.kt`:
+
+- `LoggingWindowExceptionHandlerFactory`, provided via `LocalWindowExceptionHandlerFactory`
+  **outside** the `Window` composable (the factory is read when the window is created, so providing
+  it inside would be too late). Logs through Kermit and does nothing else — in particular it does
+  not dispatch `WINDOW_CLOSING`.
+- `installUncaughtExceptionLogging()`, a `Thread.setDefaultUncaughtExceptionHandler` covering
+  threads AWT's event queue doesn't own — background coroutines, BLE callbacks, the `GlobalScope`
+  launches the sign-in buttons use. Mirrors Android's existing handler in `MainApplication`, minus
+  the delegation to a previous handler: nothing sits behind it here (Crashlytics has no jvm
+  artifact), and the JVM's own fallback would just reprint what Kermit already recorded.
+
+**Verified by experiment under Xvfb, both variants, same conditions** — not by reasoning about the
+decompiled bytecode alone. A throwaway harness threw from inside composition two seconds after
+start while a background thread printed a heartbeat:
+
+- *Without* the fix: an `Error` window appears in the X window list; sending Return to dismiss it
+  ends the process (`exit 0`), heartbeat stops. This is the reported bug, reproduced.
+- *With* the fix: no `Error` window exists at all, Kermit logs "Uncaught exception in window
+  composition or event handling", the same Return does nothing, and the heartbeat keeps running
+  until the process is killed externally.
+
+**Honest limitation, stated in-code:** Compose offers no way to catch an exception inside a
+composable, so `WindowExceptionHandler` is the only available seam. The process and the BLE
+connection survive, but the failed composition is not recovered — the window can be left showing
+stale content until something recomposes it. Fixing the underlying cause of any given screen's
+exception still matters; this only stops one screen from taking everything else with it. There is
+no unit test: reproducing it needs a real window and an X display, which is what the Xvfb harness
+above did instead.
+
 ## Firebase on desktop: real initialization, and a real Google sign-in flow
 
 Closing the gap the Phase 4 section flagged as "needs a real credentials decision, not a quick
