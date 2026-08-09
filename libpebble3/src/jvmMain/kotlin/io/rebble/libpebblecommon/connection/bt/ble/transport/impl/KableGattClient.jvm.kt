@@ -30,11 +30,13 @@ actual fun peripheralFromIdentifier(
     // autoConnect has no JVM/btleplug equivalent (PeripheralBuilder has no
     // autoConnectIf like AndroidPeripheral does) -- connects normally either way.
     return try {
-        // btleplug's Linux (BlueZ) backend identifies peripherals by D-Bus object path, not a
-        // bare MAC address - a colon-separated address here fails PeripheralId's own parsing
-        // ("expected value, line 1, column 1"), confirmed against real hardware.
+        // btleplug's kable fork deserializes this string as JSON into its own Linux
+        // PeripheralId(bluez_async::DeviceId { object_path }) - not a bare MAC address or D-Bus
+        // path string, both confirmed to fail against real hardware ("expected value, line 1,
+        // column 1" / a Rust panic in peripheral_id.rs respectively).
         val dbusPath = "/org/bluez/hci0/dev_${identifier.asString.replace(":", "_")}"
-        Peripheral(dbusPath.toIdentifier()) {}
+        val json = "{\"object_path\":\"$dbusPath\"}"
+        Peripheral(json.toIdentifier()) {}
     } catch (e: Exception) {
         logger.e(e) { "error constructing Peripheral for $identifier" }
         null
