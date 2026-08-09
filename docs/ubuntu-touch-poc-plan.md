@@ -784,7 +784,53 @@ from the working `busctl` commands); evaluating whether `dbus-java`'s object-exp
 replace `GattServer.jvm.kt`'s Python companion process for the local GATT server side, given the
 junixsocket transport's file-descriptor-passing support was specifically chosen with this in mind.
 
-## Phase 5: `lomiri-app-launch` crash, root-caused (not fixed - it's upstream)
+## Narrowing the real BLE connect-drop (usable-app goal, still open)
+
+**The single-command launch half of the usability goal is done**: `dbus_proxy.py` is now a real
+persistent `systemd --user` service (`coreapp-dbus-proxy.service`, auto-starts, restarts on
+failure) instead of something hand-launched each session. `lomiri-app-launch
+x11poc-real_coreapp_0.0` - the real production launch mechanism, not a workaround - now reliably
+brings up the real window with zero manual pre-setup, verified fresh from a clean state.
+`journalctl --user` captures the app's full real-time log through this path too, no more file-
+redirect tricks needed for observing it.
+
+**The BLE connection half narrowed significantly, isolating the problem below our own code
+entirely.** Wrote a minimal, direct `dbus-java` test - no Kable, no btleplug, no `busctl` - calling
+`org.bluez.Device1.Connect()` on the bonded Pebble directly and polling `Connected`/
+`ServicesResolved` every 200ms:
+
+```
+Connect() RETURNED after 86-108ms
+Connected=true at ~120-135ms
+Connected=true still at ~350-360ms
+Connected=false (disconnected) at ~566-580ms
+```
+
+**This is a real, consistent, ~550-600ms connect-then-drop, before `ServicesResolved` ever
+becomes true - reproduced identically through raw BlueZ D-Bus, completely bypassing Kable,
+btleplug, and every line of this app's own jvmMain code.** That means the remaining problem is not
+in anything built this session - it's a real Bluetooth-level issue between this Linux BT stack and
+the Pebble's firmware (or a stale bonding state), independent of which JVM library or connection
+approach is used on top of it.
+
+Tested and ruled out: `Device1.Trusted` was `false` (a real, plausible hypothesis - untrusted
+devices get different reconnection handling in BlueZ) - set it to `true` directly, re-ran the same
+test, **identical ~580ms disconnect**. Not the cause.
+
+The consistent, non-random timing (~550-600ms every time, not once) points at something
+deterministic rather than flaky radio conditions - most likely either a stale/mismatched bonding
+key (the existing `Bonded: true` state predates this session, from whenever this watch last paired
+with a real phone - if the LTK BlueZ has stored no longer matches what the watch's firmware has,
+encrypted link setup fails silently right around this point) or a real connection-parameter
+negotiation the watch's firmware rejects. Couldn't narrow further remotely - kernel HCI-level logs
+(`dmesg`/`journalctl -k`, which would show the actual disconnect reason code from the controller)
+need root, not available over this SSH session.
+
+**Real next step, needs the user**: retry with the watch's screen actively woken during the
+attempt (rules out "asleep, not truly listening" cleanly, independent of the ~550ms pattern which
+looks unrelated to sleep state); if that doesn't change anything, forgetting and freshly re-pairing
+the watch from this device would test the stale-bonding-key hypothesis directly - a clean new bond
+naturally has a fresh, correct LTK.
 
 Reproduced the crash with the real `composeApp`, not just `xclock`. Wrote a real `.desktop` entry
 (`x11poc-real_coreapp_0.0`, `Exec=/home/phablet/run-coreapp.sh` - a wrapper starting the in-sandbox
