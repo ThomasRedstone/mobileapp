@@ -12,6 +12,7 @@ import coredevices.NoOpExperimentalDevicesFacade
 import coredevices.coreapp.di.apiModule
 import coredevices.coreapp.di.desktopModule
 import coredevices.coreapp.di.utilModule
+import coredevices.coreapp.firebase.initializeFirebase
 import coredevices.coreapp.ui.App
 import coredevices.coreapp.util.initLogging
 import coredevices.pebble.PebbleAppDelegate
@@ -32,6 +33,7 @@ fun main() {
         )
     }
     initLogging()
+    initializeFirebase()
     // Android's MainApplication.onCreate() is the only other place this gets called - nothing
     // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
     koinApp.koin.get<PebbleAppDelegate>().init()

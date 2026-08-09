@@ -280,12 +280,21 @@ compose.desktop {
     }
 }
 
+// Desktop has no google-services Gradle plugin to inject Firebase config, so bundle the same
+// (gitignored, see README.md) file the Android build uses as a resource for DesktopFirebase to
+// read at runtime. Absent, the app still starts and logs where it looked.
+rootProject.file("androidApp/src/google-services.json").takeIf { it.isFile }?.let { config ->
+    tasks.named<Copy>("desktopProcessResources") { from(config) }
+}
+
 // :pebble's compose-webview-multiplatform dependency pulls in an embedded Chromium (JCEF) on
 // desktop, which needs org.jogamp's native OpenGL bindings from a Maven repo we don't configure
 // (see docs/ubuntu-touch-poc-plan.md). Not used by anything App() reaches unconditionally at
 // startup (only specific support/help screens) - excluded from the desktop runtime classpath
 // only, so android/iOS keep the real webview.
-configurations.matching { it.name.contains("desktopRuntimeClasspath") }.configureEach {
+configurations.matching {
+    it.name == "desktopRuntimeClasspath" || it.name == "desktopTestRuntimeClasspath"
+}.configureEach {
     exclude(group = "dev.datlag", module = "kcef")
 }
 
