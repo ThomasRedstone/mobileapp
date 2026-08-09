@@ -1271,15 +1271,105 @@ distributable clickable could theoretically wrap later. Done for real:
   directory (`~/.cache/coreapp.tomredstone/...`, per `@{APP_PKGNAME}` - the same real constraint
   documented in the `linux-auto` precedent section below).
 
-**Real remaining work, not yet done, before this is genuinely usable end-to-end:**
-1. Align the app's own file paths (logs, prefs, db) with the click's actual writable dirs -
-   probably an `APP_PKGNAME`-aware path resolution on the desktop target, or launching with
-   `XDG_*_HOME` env vars pointed at the click's granted subdirectories.
+**Real remaining work, not yet done, before this is genuinely usable end-to-end:** (1) is now
+resolved - see below. (2)-(4) still open.
+1. ~~Align the app's own file paths (logs, prefs, db) with the click's actual writable dirs~~ -
+   done: `AppDirs` (`:util` jvmMain), see below.
 2. The `DbusGattConnector` well-known-name D-Bus addressing fix from the section above - untested
    inside this real package yet, but confirmed necessary by the earlier `blecheck` finding.
-3. Confined GUI launch (X11/Xwayland socket access from inside the Click) - not yet tested; today's
-   run had no display, by design, as a first confinement smoke test before adding that dimension.
+3. Confined GUI launch (X11/Xwayland socket access from inside the Click) - still not tested; every
+   run so far has deliberately had no display, to isolate the app-startup confinement questions
+   first. Now the concrete next step - see below.
 4. `google-services.json` sourcing (tracked separately, still not started).
+
+## Phase 6: `AppDirs`, `$TMPDIR`, and a confined run that gets all the way to the missing display
+
+Fixed the path-collision problem named above for real, then kept finding (and fixing) more of the
+same class of bug as each one unblocked the next:
+
+- **`AppDirs`** (`util/src/jvmMain/kotlin/coredevices/util/AppDirs.kt`): six call sites across
+  `:util` and `:composeApp` independently hardcoded `"coreapp"` as the data-dir name (some
+  reimplementing XDG base-dir fallback logic, some not) - none matched the click's real
+  `~/.cache/@{APP_PKGNAME}/` grant (`@{APP_PKGNAME}` = `"coreapp.tomredstone"`). Centralized,
+  overridable via `$COREAPP_DIR_NAME`, set by the click's own launcher script.
+- **A real launcher script was needed at all** (`coreapp-launch.sh`, not just a plain env-prefixed
+  `Exec=` line) because the confined-writable per-app runtime dir needs the numeric uid at
+  runtime, and desktop file `Exec=` lines can't do shell expansion.
+- **`:libpebble3`'s `/tmp/libpebble3.db`** - a real, pre-existing TODO in `Database.jvm.kt`, now a
+  real blocker under confinement (`/tmp` isn't writable). Fixed by reading `$TMPDIR` directly
+  (a real environment variable, always propagated across process launches) instead of the
+  `java.io.tmpdir` *system property* - self-contained, no new dependency on `:util` (which
+  `:libpebble3` deliberately avoids, being mirrored from a standalone repo).
+- **`androidx.sqlite`'s bundled native-driver extraction was a separate, harder case**: it reads
+  `java.io.tmpdir` via `java.nio.file.Files`, which - confirmed empirically, twice - does not
+  reliably pick up a late runtime property override, no matter how early in `main()`.
+  `JDK_JAVA_OPTIONS` doesn't help either: jpackage's native launcher bakes its JVM startup flags
+  into a static `.cfg` file at package time, it doesn't scan environment variables at runtime. The
+  reliable fix: `compose.desktop.application.nativeDistributions.jvmArgs +=
+  "-Djava.io.tmpdir=/home/phablet/.cache/coreapp.tomredstone/tmp"` - baked into the `.cfg`'s
+  JavaOptions section, applied before the JVM starts running any bytecode at all. Hardcoded to
+  `/home/phablet` rather than parameterized - a real, deliberate call, matching the same
+  single-user assumption already made throughout this codebase's desktop paths.
+- **Result**: a confined test run (still no display, deliberately) now gets *all the way* through
+  Firebase init, Koin DI, Room/SQLite DB open, `WatchManager`/`GattServerManager` init, permission
+  checks, and even a real calendar sync, before failing only on a headless-display error - expected,
+  since this test deliberately has none. **App startup under confinement is, for the first time, a
+  fully solved problem** - the only remaining untested dimension is the GUI/Xwayland one.
+- **One real, separate, non-fatal finding surfaced along the way**: `BusctlDbus.jvm.kt` (used by
+  `BluetoothState.jvm.kt` for a simple adapter-power check, and by `LinuxBleScanner.jvm.kt` for
+  scanning) shells out to the `busctl` command-line tool as a child process - and launching
+  arbitrary system binaries this way is denied under Click confinement (same root cause as the
+  `blecheck` test's `busctl`/`mkdir`/`dirname` denials). This is a *different* code path from
+  `DbusGattConnector` (real in-process D-Bus calls, no child process, confirmed working) - it
+  degrades gracefully (logged, doesn't crash the app) but would need porting onto real D-Bus calls
+  to work confined. Not blocking the core reconnect-to-known-device path, which is what the live
+  BLE connection actually depends on - real, scoped follow-up work, not urgent.
+
+## Phase 6: building on the workstation instead of the phone, via QEMU user-mode emulation
+
+Real, recurring problem: every distributable build (and every AppArmor-profile-reload/click
+install/reload cycle) this phase needed ran *on the phone* - heavy, repeated load on a phone-class
+CPU/RAM budget, on top of its normal load, for an entire evening. The phone froze and needed a
+power cycle once during this work; a real, plausible connection to that sustained load, not
+confirmed but not dismissed either. Moved the whole build to the workstation (64 cores, 256GB RAM)
+instead - a durable fix, not a one-off workaround:
+
+- **The one real architectural blocker**: `jpackage` has no supported cross-architecture mode -
+  Oracle's own documentation is explicit that it packages for the platform it runs on, full stop.
+  The Kotlin/JVM *compile* step itself is plain bytecode, genuinely architecture-independent - only
+  the final native-runtime-bundling step, which packages a real native aarch64 JRE, is arch-locked.
+- **Already unblocked, for free**: this workstation's kernel already had aarch64 user-mode
+  emulation registered and enabled (confirmed directly, not assumed) - meaning aarch64 binaries
+  just run transparently here, no root, no new setup needed for that part.
+- **Fetched a real aarch64 JDK 21** (Eclipse Temurin) and confirmed its `java`, `jlink`, and
+  `jpackage` tools all run correctly under emulation. Registered it (plus a JDK 17 aarch64, needed
+  for a couple of KMP modules' toolchain requirements) via a workstation-local Gradle config file -
+  not committed to the repo, since these paths only make sense on this one machine.
+- **The native-lib-stripping tool needed to be aarch64-aware too** (the same requirement the
+  phone-side build originally hit) - this workstation's own copy has no aarch64 support built in
+  at all. Fixed by downloading the matching cross-architecture package directly (no root needed to
+  fetch it), rather than reusing the phone's own copy - keeping the whole setup workstation-local.
+- **Simplest possible integration**: rather than reverse-engineering whether the Compose Desktop
+  Gradle plugin exposes a separate toolchain knob for the native-packaging step, just pointed
+  Gradle's own JDK at the aarch64 one. Every tool it invokes inherits aarch64-ness consistently,
+  all transparently emulated by the same kernel hook.
+- **Two real, genuine, previously-latent bugs surfaced by the first true clean build this project
+  has ever had** (every phone build this whole effort had a warm incremental-compile cache to hide
+  behind) - both fixed for real, not worked around:
+  1. A missing toolchain registration for JDK 17 (`:blobannotations`, `:blobdbgen`, `:libpebble3`
+     pin toolchain 17) - fixed by registering both JDKs, above.
+  2. `:pebble`'s and `:composeApp`'s desktop-target JVM bytecode level both pinned version 17
+     (matching their Android targets' genuine constraint) - but Compose Multiplatform 1.11.1's own
+     artifacts ship inline functions compiled at bytecode level 21, and Kotlin refuses to inline
+     higher-target bytecode into lower-target output. The Android and desktop targets are
+     independently configurable per KMP module; bumped only the desktop ones to 21, leaving
+     Android bytecode compatibility completely untouched.
+- **Verified real, not assumed**: the produced binaries are genuine aarch64 ELF executables (not
+  x86_64), a full clean build completes in a few minutes (comparable to the phone's own incremental
+  build time, but with the phone doing none of the work), and the resulting Click package installs,
+  loads its AppArmor profile, and runs confined exactly as the phone-built ones did (the confined
+  run described above used this workstation-built artifact). The phone is no longer touched at all
+  during the build/package cycle - only for the final install push and a confined test run.
 
 ## Phase 6, real precedent found: `linux-auto`'s privileged-helper pattern, and its real limit
 
