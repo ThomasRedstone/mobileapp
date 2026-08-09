@@ -826,11 +826,26 @@ negotiation the watch's firmware rejects. Couldn't narrow further remotely - ker
 (`dmesg`/`journalctl -k`, which would show the actual disconnect reason code from the controller)
 need root, not available over this SSH session.
 
-**Real next step, needs the user**: retry with the watch's screen actively woken during the
-attempt (rules out "asleep, not truly listening" cleanly, independent of the ~550ms pattern which
-looks unrelated to sleep state); if that doesn't change anything, forgetting and freshly re-pairing
-the watch from this device would test the stale-bonding-key hypothesis directly - a clean new bond
-naturally has a fresh, correct LTK.
+**The "asleep" hypothesis is now real evidence against, not just untested.** A separate real bug
+surfaced while checking this: `StartDiscovery` is scoped to the calling D-Bus client's connection
+lifetime in BlueZ - a `busctl` CLI invocation disconnects the instant its one call returns, so
+discovery silently stops again within moments (`Discovering=false` checked 8s after a
+`StartDiscovery` that reported success). This affects `LinuxBleScanner.jvm.kt` for real too, since
+`BusctlDbus.call()` spawns a fresh subprocess per call the same way - flagged as a second real,
+separate bug to fix, independent of the connect-drop investigation. Using a `dbus-java` connection
+that stays alive for the whole scan instead (no subprocess involved) gave a clean, real answer:
+**the watch is continuously, actively advertising right now** - `RSSI=-36` (strong, close range),
+stable for the full 14-second scan, with no dependency on the app or the watch's screen state. This
+weighs real evidence against "asleep, not listening" and further toward the stale-bonding-key
+theory - the watch is clearly present, powered, and broadcasting; the drop happens specifically
+during/after the encrypted-link phase of connecting to it.
+
+**Real next step, needs the user**: given the watch is confirmed actively advertising, retrying
+with its screen woken is now the lower-value of the two options (real evidence suggests the radio
+being asleep was never the issue). Forgetting and freshly re-pairing the watch from this device is
+the more promising test of the stale-bonding-key theory - a clean new bond naturally has a fresh,
+correct LTK. Not done unprompted: this breaks the existing bond, which is a real, only-somewhat-
+reversible action on the user's own hardware pairing state, appropriate to confirm before doing.
 
 Reproduced the crash with the real `composeApp`, not just `xclock`. Wrote a real `.desktop` entry
 (`x11poc-real_coreapp_0.0`, `Exec=/home/phablet/run-coreapp.sh` - a wrapper starting the in-sandbox
