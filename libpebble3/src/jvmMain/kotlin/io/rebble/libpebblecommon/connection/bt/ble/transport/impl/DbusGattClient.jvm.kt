@@ -122,6 +122,15 @@ class DbusGattConnector(
             }
         })
 
+        // WatchManager always awaits `disconnected` after connect() returns, success or
+        // failure - every Failure path below must complete it, or WatchManager hangs forever
+        // (the PropertiesChanged handler above only fires on a real Connected true->false
+        // transition, which never happens if Connect() itself never got that far).
+        fun failure(reason: ConnectionFailureReason): GattConnectionResult {
+            if (!_disconnected.isCompleted) _disconnected.complete(reason)
+            return GattConnectionResult.Failure(reason)
+        }
+
         var timedOut = false
         val connectTimeoutJob = scope.launch {
             kotlinx.coroutines.delay(CONNECT_TIMEOUT)
@@ -139,7 +148,7 @@ class DbusGattConnector(
             if (resolved != true) {
                 logger.w { "Connect() returned but services never resolved" }
                 runCatching { device.Disconnect() }
-                GattConnectionResult.Failure(ConnectionFailureReason.ConnectTimeout)
+                failure(ConnectionFailureReason.ConnectTimeout)
             } else {
                 GattConnectionResult.Success(
                     DbusConnectedGattClient(identifier, conn, devicePath, blePlatformConfig)
@@ -149,11 +158,7 @@ class DbusGattConnector(
             throw e
         } catch (e: Exception) {
             logger.e(e) { "error connecting" }
-            if (timedOut) {
-                GattConnectionResult.Failure(ConnectionFailureReason.ConnectTimeout)
-            } else {
-                GattConnectionResult.Failure(ConnectionFailureReason.FailedToConnect)
-            }
+            failure(if (timedOut) ConnectionFailureReason.ConnectTimeout else ConnectionFailureReason.FailedToConnect)
         } finally {
             connectTimeoutJob.cancel()
         }
