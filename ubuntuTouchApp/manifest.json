@@ -1,0 +1,15 @@
+{
+    "architecture": "arm64",
+    "description": "CoreApp - Pebble/Core watch companion",
+    "framework": "ubuntu-touch-24.04-1.x",
+    "hooks": {
+        "coreapp": {
+            "apparmor": "coreapp.apparmor",
+            "desktop": "coreapp.desktop"
+        }
+    },
+    "maintainer": "Tom Redstone <redders@gmail.com>",
+    "name": "coreapp.tomredstone",
+    "title": "CoreApp",
+    "version": "0.1.1"
+}

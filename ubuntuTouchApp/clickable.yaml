@@ -1,0 +1,18 @@
+clickable_minimum_required: 8.9.0
+
+# Phase 6 (docs/ubuntu-touch-poc-plan.md): the JVM app is built on-device (arm64, native -
+# see composeApp's createDistributable task), not cross-compiled here. Nothing in this
+# directory needs compiling; clickable's job is purely packaging the already-built
+# composeApp/build/compose/binaries/main/app/coreapp app-image (staged into ./coreapp by
+# scp-ing it off the phone) into a real .click with a real AppArmor profile.
+builder: custom
+framework: ubuntu-touch-24.04-1.x
+
+build:
+  - chmod +x $ROOT/coreapp/bin/coreapp $ROOT/coreapp/lib/libapplauncher.so
+
+install_root_data:
+  - manifest.json
+  - coreapp.apparmor
+  - coreapp.desktop
+  - coreapp

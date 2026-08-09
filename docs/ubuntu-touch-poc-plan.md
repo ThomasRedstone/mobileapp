@@ -1227,6 +1227,60 @@ well-known name on every call (nothing to do), or it doesn't, and `DbusGattConne
 its calls through low-level messages with a literal `destination="org.bluez"` instead of the
 convenience proxy API it uses today - a real, scoped, single-file change if so, not a redesign.
 
+## Phase 6, built for real with `clickable`: a genuine `.click`, installed, confined, and launching
+
+Goal: get Phase 6 actually built *using `clickable`* (the tool), not just producing a Gradle
+distributable clickable could theoretically wrap later. Done for real:
+
+- **`composeApp`'s `nativeDistributions` enabled** (`build.gradle.kts`) - `createDistributable`
+  (the Compose Desktop Gradle plugin's `jpackage`-backed task) produces a genuine self-contained
+  app image: `bin/coreapp` (native launcher), `lib/runtime/` (a `jlink`-trimmed JRE), `lib/app/`
+  (the app's jars). 248MB uncompressed. Two real environment bugs fixed to get a clean run, neither
+  a code problem: a Gradle configuration-cache serialization bug on a Kotlin/Native toolchain path
+  property (worked around with `--no-configuration-cache`), and `jlink --strip-debug` needing
+  `objcopy` (binutils), missing from the Libertine sandbox - copied in from the host directly (the
+  sandbox's `/usr/bin` is phablet-writable, no root needed; Java itself only exists inside the
+  sandbox's rootfs overlay, not on the bare host, so the build still has to run there).
+- **New `ubuntuTouchApp/` directory, a real `clickable.yaml`** (`builder: custom`,
+  `framework: ubuntu-touch-24.04-1.x`). The JVM app is built on-device (arm64 native), not
+  cross-compiled inside clickable's docker container - there's nothing to compile here, the whole
+  248MB app image is `scp`'d off the phone into `ubuntuTouchApp/coreapp/` first, and clickable's job
+  is purely packaging: `manifest.json` + `coreapp.apparmor` (`policy_groups: ["bluetooth",
+  "networking"]`) + `coreapp.desktop` + the staged app image, via `install_root_data`.
+- **`clickable build --arch arm64 --accept-review-errors` genuinely produces a `.click`** (181MB
+  compressed) - the `--accept-review-errors` need matches `ut-sonic-player`'s already-documented
+  precedent exactly (the bundled click-reviewer doesn't know this framework/policy-group
+  combination, FAILs review, still produces the package).
+- **Real, load-bearing bug found and fixed via this exact build**: first install attempt used
+  `framework: "ubuntu-touch-24.04-2.x"` (matching this device's actual image tag, and
+  `ut-sonic-player`'s choice) - and the on-device `click-apparmor` tooling silently
+  **skipped generating any AppArmor profile at all** (`Invalid policy version for
+  '....json'. Skipping`), not just the bundled review linter (which had already flagged the same
+  framework string as invalid, but this proves it's a real device-side gap, not just a stale
+  reviewer). Switched to `ubuntu-touch-24.04-1.x` (same string `linux-auto` and the earlier
+  `blecheck` test used) - profile compiled and loaded cleanly.
+- **Installed via `phone-manager`'s `pm push`** (this device's own `click install`/`pkcon` path is
+  still broken, same finding as the `blecheck` test), profile loaded with `apparmor_parser -r`
+  (`aa-clickhook` still doesn't fire automatically off `pm`'s install path - same manual step as
+  before).
+- **The real app process launched under real enforced confinement** (`aa-exec -p
+  coreapp.tomredstone_coreapp_0.1.1 coreapp/bin/coreapp`, no display) and got substantially further
+  than a smoke test - Firebase init ran, Koin DI began constructing the real dependency graph -
+  before hitting expected, understood failures: the app's hardcoded log/prefs paths
+  (`~/.cache/coreapp/logs/...`, `~/.java/.userPrefs/`) don't match the click's actual writable
+  directory (`~/.cache/coreapp.tomredstone/...`, per `@{APP_PKGNAME}` - the same real constraint
+  documented in the `linux-auto` precedent section below).
+
+**Real remaining work, not yet done, before this is genuinely usable end-to-end:**
+1. Align the app's own file paths (logs, prefs, db) with the click's actual writable dirs -
+   probably an `APP_PKGNAME`-aware path resolution on the desktop target, or launching with
+   `XDG_*_HOME` env vars pointed at the click's granted subdirectories.
+2. The `DbusGattConnector` well-known-name D-Bus addressing fix from the section above - untested
+   inside this real package yet, but confirmed necessary by the earlier `blecheck` finding.
+3. Confined GUI launch (X11/Xwayland socket access from inside the Click) - not yet tested; today's
+   run had no display, by design, as a first confinement smoke test before adding that dimension.
+4. `google-services.json` sourcing (tracked separately, still not started).
+
 ## Phase 6, real precedent found: `linux-auto`'s privileged-helper pattern, and its real limit
 
 The "not yet done" list above named a real AppArmor policy/entry point for the confined-Click

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=CoreApp
+Comment=Pebble/Core watch companion
+Exec=coreapp/bin/coreapp
+Icon=coreapp/lib/coreapp.png
+Terminal=false
+Type=Application
+X-Ubuntu-Touch=true
