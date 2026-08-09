@@ -44,7 +44,12 @@ kotlin {
 // https://developer.android.com/kotlin/multiplatform/migrate
     jvm {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_17)
+            // Compose Multiplatform 1.11.1's own artifacts ship inline functions compiled at
+            // JVM target 21 - staying at 17 here fails with "Cannot inline bytecode built with
+            // JVM target 21 into bytecode that is being built with JVM target 17" on a clean
+            // build (surfaced building on a second machine; likely always latent, just hidden
+            // by warm incremental-compile caches). Independent of the android {} target above.
+            jvmTarget.set(JvmTarget.JVM_21)
         }
     }
 

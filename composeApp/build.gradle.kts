@@ -162,7 +162,9 @@ kotlin {
     // finished by this target existing.
     jvm("desktop") {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_17)
+            // See pebble/build.gradle.kts's jvm{} target for why: Compose Multiplatform 1.11.1's
+            // own artifacts ship inline functions compiled at JVM target 21.
+            jvmTarget.set(JvmTarget.JVM_21)
         }
         // compose.desktop.application.mainClass (below) doesn't wire into Kotlin's own
         // `desktopRun` task - that needs its own mainRun {} config.
