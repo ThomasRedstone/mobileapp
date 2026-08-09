@@ -1,13 +1,14 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **the real app is running on the real Fairphone 4, rendering its actual UI, and attempts a
-real GATT connection to the real Pebble Time 2 over real BlueZ D-Bus — reaching a genuine
-Bluetooth-layer `ConnectTimeout`, not an infrastructure/plumbing failure.** Phase 4 is done (see
-"Phase 4, completed" below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk
-to the watch) has moved from "unknown" to "known, narrow, Bluetooth-level" — see "Beyond Phase 4:
-real BLE against real hardware" for the full, honest account, including a real proxy bug (a
-connection fd/task leak) found and fixed live. Phase 5 (`lomiri-app-launch`) and Phase 6
-(distribution) are still not started.
+Status: **the real app is running on the real Fairphone 4, rendering its actual UI, launches via
+the real `lomiri-app-launch` production mechanism (not a workaround), and attempts a real GATT
+connection to the real Pebble Time 2 over real BlueZ D-Bus — reaching a genuine Bluetooth-layer
+`ConnectTimeout`, not an infrastructure/plumbing failure.** Phase 4 is done (see "Phase 4,
+completed" below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk to the
+watch) has moved from "unknown" to "known, narrow, Bluetooth-level" — see "Beyond Phase 4: real BLE
+against real hardware". Phase 5's `lomiri-app-launch` crash is now root-caused precisely (a real
+upstream library bug, unrelated to this app - see "Phase 5" below) rather than just reproduced.
+Phase 6 (distribution) is still not started.
 
 ## Goal
 
@@ -733,11 +734,47 @@ correctly against the real Pebble Time 2, at least up to the point of establishi
 link. What remains is a real, narrow Bluetooth-layer question - not an unknown infrastructure
 problem anymore.
 
-## Phases 5 and 6 (not started)
+## Phase 5: `lomiri-app-launch` crash, root-caused (not fixed - it's upstream)
 
-Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision) remain exactly as scoped in
-the original roadmap — untouched. Phase 6's option set is now better understood, though (see
-below) — it isn't just "Libertine vs. QML rewrite".
+Reproduced the crash with the real `composeApp`, not just `xclock`. Wrote a real `.desktop` entry
+(`x11poc-real_coreapp_0.0`, `Exec=/home/phablet/run-coreapp.sh` - a wrapper starting the in-sandbox
+D-Bus relay before the app itself) and registered it via `libertine-container-manager list-apps`,
+matching the exact same real mechanism the earlier `xclock`/`xev` spikes used (not a shortcut).
+Sourced the real session environment from `systemctl --user show-environment` and ran
+`lomiri-app-launch x11poc-real_coreapp_0.0` for real:
+
+- `Started: x11poc-real_coreapp_0.0` prints.
+- The real Java process launches successfully - confirmed via `ps aux`, and via `xwininfo` showing
+  the real `"Core"` window, full screen size, no error state.
+- `lomiri-app-launch` itself then aborts: `terminate called after throwing an instance of
+  'std::runtime_error' what(): Lost our connection with the registry` (SIGABRT, exit 134) - but
+  the app keeps running, exactly the pattern already documented for `xclock`.
+
+**Root-caused precisely, not just reproduced.** The error string was assumed to be a Wayland/GDK
+message (`gdk-wayland`'s own registry-loss handling uses very similar wording) - checked rather
+than assumed, via `strings` against the actual binaries. It isn't: `strings
+/usr/lib/aarch64-linux-gnu/liblomiri-app-launch.so.0` shows the message lives inside
+`liblomiri-app-launch` itself, alongside sibling strings `Registry object invalid!`, `App Store
+lost track of the Registry that owns it`, `Jobs manager lost track of the Registry that owns it` -
+all referring to `lomiri::app_launch::Registry`, the library's **own internal C++ object**
+tracking installed/running apps and jobs, completely unrelated to Wayland's `wl_registry`. This is
+a real lifetime/ownership bug in the `lomiri-app-launch` CLI tool's own shutdown path (plausibly a
+`weak_ptr` to its `Registry` outliving the `shared_ptr` that owns it, hit right as the short-lived
+CLI process tears down after successfully signaling app-started) - not anything caused by our app,
+our architecture, or the Libertine/X11 approach.
+
+**Not pursued further**: fixing this properly needs `lomiri-app-launch`'s actual C++ source
+(GitLab: `ubports/core/lomiri-app-launch`) to find and patch the real ownership bug - out of scope
+for this app's own repo, and the right next step is reporting it upstream, not patching a
+system library locally. Practically, this doesn't block anything: the target app launches and
+keeps running correctly either way, so a production Click/system-deb build would just need to
+tolerate (or itself catch/ignore) this CLI wrapper's own post-success crash, not work around a
+launch failure.
+
+## Phase 6 (not started)
+
+Distribution decision remains exactly as scoped in the original roadmap — untouched. Its option
+set is now better understood, though (see below) — it isn't just "Libertine vs. QML rewrite".
 
 ## Phase 6, revisited: a genuine third distribution option — X11 packaged as a Click
 

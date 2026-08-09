@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=CoreApp
+Comment=Pebble/Core companion app - Ubuntu Touch desktop-target PoC
+Exec=/home/phablet/run-coreapp.sh
+Icon=/usr/share/pixmaps/python3.12.xpm
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=true
