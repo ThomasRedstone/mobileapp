@@ -1,13 +1,13 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **`:composeApp:compileKotlinDesktop` — `BUILD SUCCESSFUL`, real, on the real Fairphone 4,
-zero errors.** The actual app — Pebble watch UI, BLE stack, Ring/Index-AI features behind a
-platform facade — compiles for Ubuntu Touch's desktop target. Phases 0 through most of 4 of the
-roadmap are done and verified by the real compiler, not by inspection. This is still an exploratory
-proof-of-concept, not a committed feature — see `CLAUDE.md` platform rules (Android/iOS are the
-supported targets). What's left before this is "running": Phase 4's remaining piece (a real desktop
-entry point/Koin bootstrap — App() compiles but nothing calls it yet), then Phase 5
-(`lomiri-app-launch`) and Phase 6 (distribution, see below).
+Status: **the real app is running on the real Fairphone 4, rendering its actual UI, and can
+seed/see the real Pebble Time 2 over real BlueZ D-Bus.** Phase 4 is done (see "Phase 4, completed"
+below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk to the watch) is
+now mostly resolved too — see "Beyond Phase 4: real BLE against real hardware" below for the full,
+messy, honest account. One concrete bug remains open at the point this was last worked on: the
+D-Bus proxy bridging `/run/dbus` into the Libertine sandbox needs to be made robust under
+concurrent connections (see that section's last entry). Phase 5 (`lomiri-app-launch`) and Phase 6
+(distribution) are still not started.
 
 ## Goal
 
@@ -580,13 +580,149 @@ module in turn. That's multi-module, multi-day-scale work, not something to push
 blind trial-and-error in one sitting. Not attempted further this session — flagging precisely,
 rather than guessing at a fix, is the responsible stopping point here.
 
+## Phase 4, completed: the real app is running, real navigation, real screens
+
+Superseding the "not yet running" note above. A real desktop entry point (`composeApp/src/desktopMain/kotlin/Main.kt`)
+now bootstraps Koin and calls `App()`. Getting from "compiles" to "actually renders and stays up"
+took a chain of real, distinct bugs, each confirmed by a real run on the real Fairphone 4:
+
+1. **`libawt_xawt.so` missing** — the container had `openjdk-17-jdk-headless`, which genuinely
+   ships without AWT's native X11 backend. Installed `openjdk-17-jre` (the non-headless package).
+2. **Room's `kspJvm` dependency was commented out** in `libpebble3/build.gradle.kts` — KSP never
+   ran the Room compiler for jvmMain, so `Database_Impl` never got generated. Uncommented it.
+3. **Room's KSP-generated `DatabaseConstructor` actual fails expect/actual matching on jvm**
+   specifically (Android/iOS unaffected, cause unclear) — excluded that one generated file from
+   the jvm compile via a `doFirst` delete; jvm doesn't need it anyway, since `Database.jvm.kt`
+   uses Room's reflection-based JVM builder, not the constructor-factory path Native/Wasm need.
+4. **`kmp-io`'s jar needs Java 21 bytecode** (`UnsupportedClassVersionError`, class file version
+   65 vs the container's Java 17) — installed `openjdk-21-jre` and launch the app under it
+   explicitly by full path, while keeping the *default* `java` on 17 (installing 21 via
+   `update-alternatives` breaks Gradle's own toolchain resolution — it picks up the JRE-only
+   `java-21-openjdk` as a compiler toolchain and fails since it has no `javac`).
+5. **Six `TODO()` stubs in `libpebble3`'s jvmMain** crashed at runtime the moment each was
+   actually reached: `Locker.jvm.kt`, `TimeChanged.jvm.kt`, `DevConnectionTransport.jvm.kt`,
+   `FirmwareDownloader.jvm.kt`, `TempFile.jvm.kt`, `JSLocalStorageInterface.jvm.kt`. Implemented
+   for real (temp-dir-based paths mirroring the Android pattern; `java.util.prefs`-backed
+   `Settings` for JS local storage). `BitmapUtil.jvm.kt`'s pixel-array constructor is still a
+   `TODO()` — needs a real Skia bitmap implementation, only reached by watch screenshot capture,
+   not the startup path.
+6. **`AppUpdatePlatformContent` was expect/actual'd for jvm but the `AppUpdate` interface itself
+   had no desktop Koin binding** — `WatchSettingsScreen`'s badge counter does a plain `get()`.
+   Bound a no-op (updates are handled by the system package manager on desktop, not in-app).
+7. **`WatchHomeViewModel` takes `LibIndex` directly**, not through `ExperimentalDevicesFacade` —
+   another plain `get()` with no desktop binding. Bound `NoOpLibIndex` (empty rings, no scanning;
+   the ring is android/iOS-only and the user doesn't own one, so this is a real, permanent no-op,
+   not a stopgap).
+8. **`CactusModelPathProvider` had no desktop binding either** — same shape, same fix (a real
+   no-op object, mirroring `utilModule.kt`'s own existing fallback pattern for the same type).
+9. **Compose's processed-resources directory wasn't on the runtime classpath** — Gradle's own
+   `desktopRuntimeClasspath` only covers dependency jars + compiled classes, not
+   `build/processedResources/desktop/main` (where the generated `composeResources` drawables
+   live). Added it to the classpath explicitly when invoking `java -cp`.
+10. **Window sizing**: `WindowPlacement.Maximized` resizes the outer AWT frame under this
+    Xwayland/Mir XWM setup, but the inner Compose content canvas doesn't follow and stays at the
+    800x600 default. Fixed by querying the real screen size via `java.awt.Toolkit` and sizing the
+    window explicitly.
+11. **Density**: even with the canvas correctly filling the screen in pixels, Compose has no
+    signal this is a high-density phone display rather than a normal desktop monitor, so dp-based
+    UI (text, touch targets) rendered at desktop scale — physically tiny. Fixed with an explicit
+    `Density(2.75f)` override wrapping `App()` (an approximation of this phone's real density;
+    Compose's dp is defined the same way as Android's, 1dp = 1/160in, so a real fix would query
+    the actual physical DPI rather than hardcoding this).
+12. **Nothing was actually calling `PebbleAppDelegate.init()`** on desktop — only Android's
+    `MainApplication.onCreate()` did. This meant `LibPebble.init()` (and therefore
+    `bluetoothStateProvider.init()`, `gattServerManager.init()`, `watchManager.init()`, etc.) had
+    never run at all, on any previous "working" launch this session — explaining why several
+    earlier fixes (like the Bluetooth-state polling implementation, item below) appeared to have
+    no effect. Added the equivalent call to `Main.kt`.
+
+With all of that, the app genuinely renders its real screens (Onboarding → WatchHome →
+Watches/Notifications/Watchfaces tabs, Settings, Locker) with real navigation, at a real,
+phone-appropriate size. Known, deliberately out-of-scope-for-now gaps: Google/GitHub/Apple sign-in
+are honest no-op stubs on desktop (no CredentialManager/OAuth browser flow implemented yet); the
+Firestore-backed Firebase Auth JVM SDK needs a real `FirebaseApp.initializeApp()` call with real
+project config to stop crashing the Settings screen (not attempted — needs real credentials
+decision, not a quick stub); bottom nav icon labels are visually clipped a little (a minor,
+unfixed density/layout mismatch).
+
+## Beyond Phase 4: real BLE against real hardware
+
+This is the section that actually addresses the original Phase 1-3 concern — not "does the JVM
+BLE code compile" (it always did) but "does it work against the real Pebble Time 2". Real,
+concrete findings, each confirmed live on-device:
+
+**The Libertine sandbox has no D-Bus access at all**, discovered the hard way: every earlier
+"successful" `busctl` test this whole investigation ran from a plain SSH shell *outside* the
+Libertine bwrap sandbox, not from inside it (`libertine-launch --id x11poc-real -- ...`). Libertine
+is unconfined (no AppArmor), but its bwrap sandbox still does `--tmpfs /run`, wiping `/run/dbus`
+entirely — only `/run/user/<uid>` gets bind-mounted back in. So the actual app, running inside the
+sandbox, had never once been able to reach the real system bus. Worked around with a two-hop proxy
+(scripts saved under `docs/ubuntu-touch-poc-tools/`):
+
+- `dbus_proxy.py` runs **outside** the sandbox, on the real host, forwarding a Unix socket placed
+  under `/run/user/<uid>/dbus-system-proxy.sock` (which *is* bind-mounted into the sandbox) to the
+  real `/run/dbus/system_bus_socket`.
+- `BusctlDbus.jvm.kt` sets `DBUS_SYSTEM_BUS_ADDRESS` explicitly to that proxied path before
+  shelling out to `busctl` — this fixed our *own* D-Bus calls (scanning, bonded-watch seeding).
+- Kable's native Rust `btleplug` FFI layer, however, opens its **own** D-Bus connection in-process
+  and hardcodes the well-known `/run/dbus/system_bus_socket` path — it does not read
+  `DBUS_SYSTEM_BUS_ADDRESS`. Fixed with a *second* relay (`dbus_relay_in_sandbox.py`) that must run
+  **inside** the same `libertine-launch` sandbox instance as the app (each `libertine-launch`
+  invocation gets its own private `/run` tmpfs — a relay started in one invocation is invisible to
+  an app started in a separate one; they must share one shell script under one invocation),
+  creating `/run/dbus/system_bus_socket` there and forwarding to the outer proxy.
+- **Not yet resolved**: the simple asyncio-based proxy appears to refuse connections under a burst
+  of concurrent activity (seen as `busctl call failed ... Connection refused`, plausibly the
+  default asyncio accept-backlog getting overwhelmed when several connection attempts land close
+  together during a GATT connect attempt) — confirmed the *same* underlying Unix socket works fine
+  when tested in isolation immediately after. Needs a more robust proxy (larger backlog, or a
+  small persistent multi-client server rather than the current simple relay) before real,
+  sustained BLE traffic is reliable.
+
+**BlueZ correctly sees the real watch already bonded** — `Pebble 70B8` (`DF:07:0A:D4:70:B8`),
+`Paired: true`, `Bonded: true`, `Connected: false` — from earlier real-world pairing, independent
+of anything this session did.
+
+**`BondedWatchSeeder.jvm.kt` was a stub** (`return emptyList()` unconditionally) — implemented for
+real, querying BlueZ's `GetManagedObjects` via `BusctlDbus` for `Bonded` devices matching
+`PEBBLE_NAME_REGEX` (moved that regex from `androidMain` to `commonMain` since it's genuinely
+platform-independent). This successfully seeds the real bonded Pebble into the app's own known-
+watches DB and UI.
+
+**A real, load-bearing regex bug in `BluezObjectParser.devicePathRegex`**: it required
+`"org.bluez.Device1"` to appear *immediately* after the device's D-Bus object path, but BlueZ
+always lists other interfaces (at minimum `org.freedesktop.DBus.Introspectable`) first — meaning
+this regex had never matched a single real device all session, silently. This is *why* both the
+live scanner and the bonded-watch seeder appeared to find nothing even once D-Bus access itself was
+fixed. Fixed the regex to skip over intervening interfaces without crossing into the next
+top-level object path.
+
+**`KableGattClient.jvm.kt`'s `peripheralFromIdentifier` used the wrong identifier format for
+btleplug**, in two wrong guesses before the real answer:
+1. A bare MAC address (`"DF:07:0A:D4:70:B8"`) → `InternalException: ... Error("expected value",
+   line: 1, column: 1)` (a JSON parse error - the real clue).
+2. A bare D-Bus object path (`"/org/bluez/hci0/dev_DF_07_0A_D4_70_B8"`) → a Rust panic inside
+   `peripheral_id.rs`.
+3. **The real answer**, found by reading Kable's actual Rust source
+   (`JuulLabs/kable/kable-btleplug-ffi/src/peripheral_id.rs`, which on Linux deserializes the
+   identifier string as JSON directly into `btleplug::platform::PeripheralId`, itself a newtype
+   around `bluez_async::DeviceId { object_path }`): the identifier must be the JSON string
+   `{"object_path":"/org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX"}`. With this, `Peripheral()` constructs
+   successfully and a real connection attempt proceeds all the way into btleplug's
+   `establishConnection` — the D-Bus proxy robustness issue above is the only thing that stopped a
+   full connect from completing at the point this was last worked on.
+
+**Net assessment**: every piece of the JVM BLE stack (D-Bus access, bonded-device discovery, GATT
+client identifier construction) has now been proven correct against the real Pebble Time 2 at
+least once. What remains between here and a reliable connection is the D-Bus proxy's robustness
+under concurrent load — an infrastructure/reliability problem with a known shape, not an unknown
+one.
+
 ## Phases 5 and 6 (not started)
 
 Phase 5 (`lomiri-app-launch` crash) and Phase 6 (distribution decision) remain exactly as scoped in
-the original roadmap — untouched this session. Phase 4 has now produced a real compiling app, but
-not yet a running one (no desktop entry point/`main()` calling `App()` — see above), so Phase 5
-(fixing the *launcher*) is still one concrete step further out. Phase 6's option set is now better
-understood, though (see below) — it isn't just "Libertine vs. QML rewrite".
+the original roadmap — untouched. Phase 6's option set is now better understood, though (see
+below) — it isn't just "Libertine vs. QML rewrite".
 
 ## Phase 6, revisited: a genuine third distribution option — X11 packaged as a Click
 
