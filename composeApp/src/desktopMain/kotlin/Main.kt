@@ -24,13 +24,10 @@ import org.koin.dsl.module
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
-    // libpebble3's Room DB defaults to System.getProperty("java.io.tmpdir") (plain /tmp) - not
-    // writable under Click confinement (docs/ubuntu-touch-poc-plan.md, Phase 6). Override before
-    // any Koin singleton (LibPebble3's WatchManager) can construct it and read the property.
-    System.getenv("COREAPP_TMPDIR")?.takeIf { it.isNotBlank() }?.let {
-        java.io.File(it).mkdirs()
-        System.setProperty("java.io.tmpdir", it)
-    }
+    // java.io.tmpdir itself is set via JDK_JAVA_OPTIONS (before the JVM starts - too early for
+    // any code here to race), but nothing creates the directory; Room's bundled SQLite driver
+    // needs it to already exist (docs/ubuntu-touch-poc-plan.md, Phase 6).
+    java.io.File(System.getProperty("java.io.tmpdir")).mkdirs()
 
     val koinApp = startKoin {
         modules(
