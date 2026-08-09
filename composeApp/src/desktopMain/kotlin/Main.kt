@@ -4,6 +4,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -20,6 +22,7 @@ import coredevices.pebble.watchModule
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 
+@OptIn(ExperimentalComposeUiApi::class)
 fun main() {
     val koinApp = startKoin {
         modules(
@@ -33,6 +36,7 @@ fun main() {
         )
     }
     initLogging()
+    installUncaughtExceptionLogging()
     initializeFirebase()
     // Android's MainApplication.onCreate() is the only other place this gets called - nothing
     // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
@@ -47,13 +51,19 @@ fun main() {
             width = screenSize.width.dp,
             height = screenSize.height.dp,
         )
-        Window(onCloseRequest = ::exitApplication, title = "Core", state = windowState) {
-            // Compose has no way to know this is a high-density phone display rather than a
-            // normal desktop monitor, so dp-based UI renders at desktop scale - physically
-            // tiny here. ~2.75x approximates this phone's real pixel density (Android's dp
-            // is defined the same way: 1dp = 1/160in, so density = real dpi / 160).
-            CompositionLocalProvider(LocalDensity provides Density(2.75f)) {
-                App()
+        // Must wrap Window: the factory is read when the window is created, and the default one
+        // closes the window (and so the whole app) on any exception escaping composition.
+        CompositionLocalProvider(
+            LocalWindowExceptionHandlerFactory provides LoggingWindowExceptionHandlerFactory
+        ) {
+            Window(onCloseRequest = ::exitApplication, title = "Core", state = windowState) {
+                // Compose has no way to know this is a high-density phone display rather than a
+                // normal desktop monitor, so dp-based UI renders at desktop scale - physically
+                // tiny here. ~2.75x approximates this phone's real pixel density (Android's dp
+                // is defined the same way: 1dp = 1/160in, so density = real dpi / 160).
+                CompositionLocalProvider(LocalDensity provides Density(2.75f)) {
+                    App()
+                }
             }
         }
     }
