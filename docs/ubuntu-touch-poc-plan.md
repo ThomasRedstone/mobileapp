@@ -1,12 +1,12 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
-Status: **the real app is running on the real Fairphone 4, rendering its actual UI, and can
-seed/see the real Pebble Time 2 over real BlueZ D-Bus.** Phase 4 is done (see "Phase 4, completed"
-below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk to the watch) is
-now mostly resolved too — see "Beyond Phase 4: real BLE against real hardware" below for the full,
-messy, honest account. One concrete bug remains open at the point this was last worked on: the
-D-Bus proxy bridging `/run/dbus` into the Libertine sandbox needs to be made robust under
-concurrent connections (see that section's last entry). Phase 5 (`lomiri-app-launch`) and Phase 6
+Status: **the real app is running on the real Fairphone 4, rendering its actual UI, and attempts a
+real GATT connection to the real Pebble Time 2 over real BlueZ D-Bus — reaching a genuine
+Bluetooth-layer `ConnectTimeout`, not an infrastructure/plumbing failure.** Phase 4 is done (see
+"Phase 4, completed" below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk
+to the watch) has moved from "unknown" to "known, narrow, Bluetooth-level" — see "Beyond Phase 4:
+real BLE against real hardware" for the full, honest account, including a real proxy bug (a
+connection fd/task leak) found and fixed live. Phase 5 (`lomiri-app-launch`) and Phase 6
 (distribution) are still not started.
 
 ## Goal
@@ -671,13 +671,15 @@ sandbox, had never once been able to reach the real system bus. Worked around wi
   invocation gets its own private `/run` tmpfs — a relay started in one invocation is invisible to
   an app started in a separate one; they must share one shell script under one invocation),
   creating `/run/dbus/system_bus_socket` there and forwarding to the outer proxy.
-- **Not yet resolved**: the simple asyncio-based proxy appears to refuse connections under a burst
-  of concurrent activity (seen as `busctl call failed ... Connection refused`, plausibly the
-  default asyncio accept-backlog getting overwhelmed when several connection attempts land close
-  together during a GATT connect attempt) — confirmed the *same* underlying Unix socket works fine
-  when tested in isolation immediately after. Needs a more robust proxy (larger backlog, or a
-  small persistent multi-client server rather than the current simple relay) before real,
-  sustained BLE traffic is reliable.
+- **Found and fixed a real bug in both relay scripts**: each bidirectional pipe joined its two
+  directions with a plain `asyncio.gather()`. When one direction closed (e.g. the client side
+  finished), the other stayed blocked forever waiting on its still-open peer for data that would
+  never come — a normal shape for D-Bus connections, which are commonly idle in one direction.
+  Every such connection leaked its fd/task pair permanently; enough of them (as happens during a
+  GATT connect attempt) exhausted resources and made *new* connections fail with `Connection
+  refused`, even though the same socket worked fine when tested in isolation. Fixed by closing
+  both sides together. Verified with 15 sequential `busctl` calls through the fixed proxy, all
+  succeeding (previously this would start failing partway through under real app load).
 
 **BlueZ correctly sees the real watch already bonded** — `Pebble 70B8` (`DF:07:0A:D4:70:B8`),
 `Paired: true`, `Bonded: true`, `Connected: false` — from earlier real-world pairing, independent
@@ -708,15 +710,28 @@ btleplug**, in two wrong guesses before the real answer:
    identifier string as JSON directly into `btleplug::platform::PeripheralId`, itself a newtype
    around `bluez_async::DeviceId { object_path }`): the identifier must be the JSON string
    `{"object_path":"/org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX"}`. With this, `Peripheral()` constructs
-   successfully and a real connection attempt proceeds all the way into btleplug's
-   `establishConnection` — the D-Bus proxy robustness issue above is the only thing that stopped a
-   full connect from completing at the point this was last worked on.
+   successfully.
+
+**With the proxy fd-leak fixed and the correct identifier format, a real connection attempt now
+proceeds cleanly through establishing the connection - no D-Bus panics, no refused connections -
+and reaches a genuine `Failed(reason=ConnectTimeout)`** (`KableGattConnector`'s own connect-timeout
+watchdog force-disconnects after the peripheral doesn't respond in time). This is a real
+Bluetooth-layer outcome, not an infrastructure one: either the watch wasn't actively listening for
+a connection at that moment (real BLE peripherals sleep/only accept connections during specific
+windows), or there's a real, narrower remaining bug in the connect sequence itself (GATT connection
+parameters, a missing step Kable's Android/iOS path handles automatically that btleplug's Linux
+backend needs explicitly, etc.) - not yet distinguished. Cleaning up after the timeout also
+surfaced a second real bug: btleplug's disconnect/cleanup path panics
+(`peripheral.rs:121:57, called Result::unwrap() on an Err value: ... D-Bus ... Timeout`) if the
+D-Bus reply for the cleanup call itself times out - plausible given the two-hop proxy adds real
+round-trip latency to every D-Bus call. Worth first trying a connection attempt while directly
+watching/waking the watch, and profiling the proxy's added latency, before assuming a code bug.
 
 **Net assessment**: every piece of the JVM BLE stack (D-Bus access, bonded-device discovery, GATT
-client identifier construction) has now been proven correct against the real Pebble Time 2 at
-least once. What remains between here and a reliable connection is the D-Bus proxy's robustness
-under concurrent load — an infrastructure/reliability problem with a known shape, not an unknown
-one.
+client identifier construction, the connection attempt itself) has now been proven to work
+correctly against the real Pebble Time 2, at least up to the point of establishing a live BLE
+link. What remains is a real, narrow Bluetooth-layer question - not an unknown infrastructure
+problem anymore.
 
 ## Phases 5 and 6 (not started)
 
