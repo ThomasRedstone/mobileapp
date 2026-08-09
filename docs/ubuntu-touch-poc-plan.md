@@ -1385,6 +1385,29 @@ this work and reproducing it on a clean tree. It means the Android-side compile 
 change above could not be verified — though the rewritten test now references only commonMain
 types, and the version it replaced compiled on no platform at all.
 
+## Roadmap, tracked but not started: phone-integration features need real Ubuntu Touch wiring
+
+Flagged explicitly so it doesn't get lost, not because it's next up. `LibPebbleModule.jvm.kt`'s
+`platformModule` binds every phone-integration surface (`LinuxNotificationListenerConnection`,
+`LinuxNotificationActionHandler`, `LinuxLegacyPhoneReceiver`, `LinuxSystemCalendar`,
+`LinuxSystemContacts`, `LinuxSystemCallLog`, etc.) to genuine no-ops — real code, but doing
+nothing, by design, because none of it had a real target this session. Two of these matter for
+actual day-to-day use and need real, separate design work when they come up:
+
+- **Watch → phone notification forwarding.** Needs a real source of phone notifications on Ubuntu
+  Touch to bridge from - unlike Android's `NotificationListenerService`, there's no single
+  standard API; likely candidates are `lomiri-push-notifications`/the indicator services already
+  visible in this session's own `systemctl`/`journalctl` output (`lomiri-push-ser`,
+  `lomiri-content-`), not yet investigated.
+- **Call accept/reject from the watch.** Needs real telephony integration - `ofono`/`telepathy`
+  are the standard Ubuntu Touch telephony stack (`lomiri-dialer-app`'s own `CallEntry` state
+  changes were visible unprompted in tonight's journal output, confirming telepathy call-state
+  events are genuinely available on this device), but wiring PPoG's phone-call protocol messages
+  to real accept/reject actions against that stack is real, unstarted work.
+
+Both are real "special wiring" as flagged, not a quick stub - genuinely separate scoped work for
+whenever they're prioritized, building on the same real BLE transport this session finished.
+
 ## Phases
 
 ### Phase 0 — Spikes (go/no-go gates)
