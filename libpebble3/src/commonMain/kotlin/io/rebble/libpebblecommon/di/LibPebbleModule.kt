@@ -284,6 +284,13 @@ class HackyProvider<T>(val getter: () -> T) {
 
 expect val platformModule: Module
 
+/**
+ * Resolves the [GattConnector] for the current [ConnectionScope]. Kable (`KableGattConnector`)
+ * on Android/iOS; on the JVM (Linux/Ubuntu Touch), `DbusGattConnector` talks to BlueZ directly -
+ * see DbusGattClient.jvm.kt.
+ */
+expect fun Scope.createBleGattConnector(): GattConnector
+
 val CommonPhoneCapabilities = setOf(
     ProtocolCapsFlag.SupportsAppRunStateProtocol,
     ProtocolCapsFlag.SupportsInfiniteLogDump,
@@ -471,7 +478,7 @@ fun initKoin(
                     scopedOf(::RealConnectionAnalyticsLogger) bind ConnectionAnalyticsLogger::class
                     scoped<GattConnector> {
                         when (val id = get<PebbleIdentifier>()) {
-                            is PebbleBleIdentifier -> get<KableGattConnector>()
+                            is PebbleBleIdentifier -> createBleGattConnector()
                             is PebbleBtClassicIdentifier -> error("BT Classic does not use GATT: $id")
                             else -> error("GATT not implemented for: $id")
                         }

@@ -1,18 +1,23 @@
 # Ubuntu Touch — X11/Libertine Proof-of-Concept Plan
 
 Status: **the real app is running on the real Fairphone 4, rendering its actual UI, launches via
-the real `lomiri-app-launch` production mechanism (not a workaround), and attempts a real GATT
-connection to the real Pebble Time 2 over real BlueZ D-Bus — reaching a genuine Bluetooth-layer
-`ConnectTimeout`, not an infrastructure/plumbing failure.** Phase 4 is done (see "Phase 4,
-completed" below). Phase 1-3's real remaining risk (does the JVM BLE stack actually talk to the
-watch) has moved from "unknown" to "known, narrow, Bluetooth-level" — see "Beyond Phase 4: real BLE
-against real hardware". Phase 5's `lomiri-app-launch` crash is now root-caused precisely (a real
+the real `lomiri-app-launch` production mechanism (not a workaround). Root cause of the BLE
+connect failure is now found: it's Kable's `btleplug` JVM/JNI bridge itself, not BlueZ, not the
+watch, not proxy latency, not bonding.** A raw `dbus-java` `Device1.Connect()` call — same two-hop
+D-Bus proxy, same watch, same everything — connects in under a second and holds a stable,
+fully-GATT-resolved connection indefinitely, repeatably. The real app's actual code path (Kable →
+`kable-btleplug-ffi`'s Rust `btleplug` client) never issues a single D-Bus call towards the watch
+at all during a whole connect attempt, then times out at Kable's own 60s Kotlin-side watchdog. See
+"Kable/btleplug never actually attempts the connection" below for the full trace and the
+recommended fix (replace the JVM `GattClient` implementation with a direct `dbus-java`-based one —
+already proven reliable — instead of depending on `kable-btleplug-ffi`). Phase 4 is done (see
+"Phase 4, completed" below). Phase 5's `lomiri-app-launch` crash is root-caused precisely (a real
 upstream library bug, unrelated to this app - see "Phase 5" below) rather than just reproduced.
 Phase 6 now has a real, reasoned recommendation (X11-as-Click over Libertine, see "Phase 6,
 decided" below) - not yet implemented, but a genuine decision rather than an open question.
 **Phase 1 is now genuinely resolved, not worked around**: a real JVM-native D-Bus library
-(`hypfvieh/dbus-java`) authenticates against the real system bus and reads real BlueZ properties -
-see "Phase 1, resolved" below.
+(`hypfvieh/dbus-java`) authenticates against the real system bus, reads real BlueZ properties, and
+— as of tonight's testing — reliably drives real GATT connections. See "Phase 1, resolved" below.
 
 ## Goal
 
@@ -881,6 +886,77 @@ system library locally. Practically, this doesn't block anything: the target app
 keeps running correctly either way, so a production Click/system-deb build would just need to
 tolerate (or itself catch/ignore) this CLI wrapper's own post-success crash, not work around a
 launch failure.
+
+## Kable/btleplug never actually attempts the connection — the real BLE root cause
+
+Continuing from "Narrowing the real BLE connect-drop" above: that section left the connect-drop
+attributed to something Bluetooth-level (BlueZ connecting then dropping ~550ms later, before
+`ServicesResolved`). Direct, controlled testing the same night disproved that and found the real
+cause instead.
+
+**What was ruled out, in order, each with a real isolated test:**
+- **Proxy latency.** Instrumented `dbus_relay_in_sandbox.py` to log a timestamp + byte count per
+  forwarded chunk. Every hop — including a ~14KB `GetManagedObjects` reply — completes in
+  single-digit-to-low-double-digit milliseconds. Not the bottleneck.
+- **Stale bonding/pairing keys.** Forced a real unbond (`Adapter1.RemoveDevice()`) + rediscover +
+  re-pair cycle. The exact same `btleplug` panic (`D-Bus error: Timeout waiting for reply`)
+  recurred on a completely fresh bond. Not the cause.
+- **Concurrent connection attempts.** Early testing this session ran ad-hoc `dbus-java` diagnostic
+  scripts *while* the real app's own `WatchManager` auto-retry loop was also live — both racing to
+  connect to the same peripheral. One raw `busctl` `Connect()` call under this condition returned
+  `le-connection-abort-by-local`: BlueZ can't hold two simultaneous connection attempts to one
+  device and aborts one. This explains the earlier fast-drop and panic symptoms, but wasn't the
+  whole story: after killing every other process and testing the app in complete isolation, real
+  connect attempts (from the actual app, not a diagnostic script) still failed.
+- **Active discovery running concurrently with `Connect()`.** A plausible Linux-BLE-stack
+  conflict (scanning and connecting contend for radio time on weaker chips). Ruled out: identical
+  failure with discovery both running and stopped.
+
+**What actually explains it — a controlled, repeatable A/B:**
+
+A minimal `dbus-java` test (`CleanConnectTest.java`: `StartDiscovery()` → wait for the device to
+reappear → `StopDiscovery()` → `Device1.Connect()` → poll `Connected`/`ServicesResolved`), run with
+nothing else touching the adapter, succeeded **twice in a row**, both times holding a stable,
+fully-resolved GATT connection for the whole 12-16s poll window with zero drops:
+
+```
+Connect() RETURNED after 114ms
+1430ms: Connected=true ServicesResolved=true
+...12575ms: Connected=true ServicesResolved=true   (attempt 1, unbroken)
+```
+
+The real app, immediately after, killed and relaunched clean with nothing else running, still hit
+`ConnectTimeout` via its actual Kable/`btleplug` code path. Instrumenting the relay to extract
+readable D-Bus interface/method-name strings from every forwarded chunk (`dbus_relay_in_sandbox.py`
+now does this — see `preview()`) made the difference conclusive: across a whole ~60s Kable connect
+attempt, **zero `Device1` method-call traffic of any kind reaches the relay**. No `Connect`, no
+`Pair`, no GATT read/write, nothing — only the unrelated `Adapter1.Powered` polling from
+`BluetoothState.jvm.kt` continues on its own 3s cycle. Kable's own Kotlin-side 60s watchdog
+(`KableGattClient.kt:80`) eventually fires and force-disconnects a peripheral that never had a
+connection attempt reach BlueZ at all.
+
+**Conclusion: `kable-btleplug-ffi`'s Rust/JNI bridge is not issuing the D-Bus call it's supposed
+to, in this environment.** This isn't a D-Bus, proxy, bonding, or BlueZ problem — every one of
+those layers has been directly tested and shown to work. The failure is inside the Kable →
+`btleplug` FFI boundary itself: either the Rust async runtime spawned via JNI never gets its
+connect task scheduled, or something about running inside a JVM in a bwrap sandbox on this
+platform (ARM64 Ubuntu Touch under Libertine) breaks that bridge's threading assumptions. The one
+time a real Rust-level panic *was* observed (`D-Bus error: Timeout waiting for reply` in
+`peripheral.rs:121`), it was under the concurrent-connection-contention condition above — i.e. even
+btleplug's rare visible failures traced back to environmental contention, not its own connect
+logic being reached normally.
+
+**Recommended fix**: stop depending on `kable-btleplug-ffi` for the JVM target. Replace
+`KableGattClient.jvm.kt` (currently ~48 lines delegating to Kable) with a direct `dbus-java`-based
+`GattClient` implementation against the `commonMain` `GattClient` interface (45 lines) — using the
+same `DBusConnectionBuilder.forSystemBus().transportConfig().configureSasl().withSaslUid(...)`
+pattern already proven reliable all session, calling `Device1.Connect()`/`GattCharacteristic1`
+methods directly instead of going through Kable at all on this platform. This is real, scoped,
+buildable work (a few hundred lines, matching `KableGattClient.kt`'s shared 325-line surface), not
+a workaround — every primitive it needs (system bus auth, `Connect()`, property watching, GATT
+service/characteristic discovery via `GetManagedObjects`) has already been exercised successfully
+tonight via raw `dbus-java` calls. Not yet implemented — this is the next concrete step towards the
+actual goal (a real, sustained BLE connection with data flowing), not a documentation-only finding.
 
 ## Phase 6: distribution decision
 

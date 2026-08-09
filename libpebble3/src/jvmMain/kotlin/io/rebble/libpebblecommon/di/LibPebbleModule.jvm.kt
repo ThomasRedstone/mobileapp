@@ -8,6 +8,8 @@ import io.rebble.libpebblecommon.connection.OtherPebbleApps
 import io.rebble.libpebblecommon.connection.PhoneCapabilities
 import io.rebble.libpebblecommon.connection.PlatformFlags
 import io.rebble.libpebblecommon.connection.bt.ble.BlePlatformConfig
+import io.rebble.libpebblecommon.connection.bt.ble.transport.GattConnector
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.DbusGattConnector
 import io.rebble.libpebblecommon.connection.bt.classic.transport.ClassicScanner
 import io.rebble.libpebblecommon.connection.bt.classic.transport.JvmClassicScanner
 import io.rebble.libpebblecommon.connection.endpointmanager.timeline.PlatformNotificationActionHandler
@@ -16,11 +18,26 @@ import io.rebble.libpebblecommon.music.SystemMusicControl
 import io.rebble.libpebblecommon.notification.NotificationAppsSync
 import io.rebble.libpebblecommon.notification.NotificationListenerConnection
 import io.rebble.libpebblecommon.packets.PhoneAppVersion
+import io.rebble.libpebblecommon.connection.PebbleBleIdentifier
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
+import org.koin.core.scope.Scope
 import org.koin.dsl.bind
 import org.koin.dsl.module
+
+/**
+ * Talks to BlueZ directly over D-Bus (DbusGattClient.jvm.kt) rather than through Kable: its
+ * `kable-btleplug-ffi` JVM/JNI bridge never actually issues a D-Bus call in this sandboxed
+ * environment (docs/ubuntu-touch-poc-plan.md, "Kable/btleplug never actually attempts the
+ * connection"). Constructed directly rather than via a `scopedOf` registration since
+ * `DbusGattConnector` only exists on this platform's `ConnectionScope`.
+ */
+actual fun Scope.createBleGattConnector(): GattConnector = DbusGattConnector(
+    identifier = get<PebbleBleIdentifier>(),
+    scope = get(),
+    blePlatformConfig = get(),
+)
 
 /**
  * Minimal platformModule for Linux/Ubuntu Touch: only the BLE connection

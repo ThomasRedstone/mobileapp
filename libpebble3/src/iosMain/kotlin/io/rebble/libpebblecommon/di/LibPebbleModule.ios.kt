@@ -10,6 +10,8 @@ import io.rebble.libpebblecommon.connection.OtherPebbleApps
 import io.rebble.libpebblecommon.connection.PhoneCapabilities
 import io.rebble.libpebblecommon.connection.PlatformFlags
 import io.rebble.libpebblecommon.connection.bt.ble.BlePlatformConfig
+import io.rebble.libpebblecommon.connection.bt.ble.transport.GattConnector
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.KableGattConnector
 import io.rebble.libpebblecommon.connection.bt.classic.transport.ClassicScanner
 import io.rebble.libpebblecommon.connection.bt.classic.transport.IosClassicScanner
 import io.rebble.libpebblecommon.connection.endpointmanager.timeline.IosNotificationActionHandler
@@ -31,9 +33,12 @@ import io.rebble.libpebblecommon.packets.ProtocolCapsFlag
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
+import org.koin.core.scope.Scope
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import kotlin.time.Duration.Companion.seconds
+
+actual fun Scope.createBleGattConnector(): GattConnector = get<KableGattConnector>()
 
 actual val platformModule: Module = module {
     single {

@@ -144,6 +144,14 @@ kotlin {
         }
 
         jvmMain.dependencies {
+            // Real GATT client transport on Linux/Ubuntu Touch (DbusGattClient.jvm.kt) - Kable's
+            // btleplug JVM/JNI bridge never issues its D-Bus calls in this sandboxed environment
+            // (see docs/ubuntu-touch-poc-plan.md, "Kable/btleplug never actually attempts the
+            // connection"), so the JVM target talks to BlueZ directly instead.
+            implementation(libs.dbus.java.core)
+            implementation(libs.dbus.java.transport.junixsocket)
+            implementation(libs.junixsocket.common)
+            implementation(libs.junixsocket.native.common)
         }
 
         jvmTest.dependencies {
