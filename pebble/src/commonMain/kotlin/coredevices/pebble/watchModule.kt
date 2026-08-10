@@ -205,7 +205,7 @@ val watchModule = module {
         WatchConfig(multipleConnectedWatchesSupported = false)
     }
     factory { NotificationConfig() }
-    factory { BleConfig() }
+    factory { defaultBleConfig() }
     single {
         Json {
             // Important that everything uses this - otherwise future additions to web apis will
@@ -266,6 +266,12 @@ val watchModule = module {
 }
 
 expect val platformWatchModule: Module
+
+// Forward-PPoG needs the phone to host a local BlueZ GATT server, which real testing found
+// AppArmor denies under Click confinement (no policy group grants `receive` on objects we export -
+// only `send` to org.bluez). Reversed PPoG (the watch hosts the GATT server) is the only viable
+// path on that platform, so it flips on there; Android/iOS are unaffected and keep the defaults.
+internal expect fun defaultBleConfig(): BleConfig
 
 enum class Platform {
     IOS,

@@ -4,10 +4,20 @@ import coredevices.pebble.health.NoOpPlatformHealthSync
 import coredevices.pebble.health.PlatformHealthSync
 import dev.jordond.compass.geocoder.Geocoder
 import dev.jordond.compass.geocoder.NotSupportedPlatformGeocoder
+import io.rebble.libpebblecommon.BleConfig
 import io.rebble.libpebblecommon.connection.AppContext
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
+
+// Hosting a local GATT server (needed for forward PPoG) is denied by AppArmor under Click
+// confinement - the `bluetooth` policy group only grants outbound `send` to org.bluez, not
+// `receive` on objects this app exports. Reversed PPoG (the watch hosts the GATT server, this
+// app only subscribes) is the only path that can work, so both reversed-PPoG flags are on here.
+internal actual fun defaultBleConfig(): BleConfig = BleConfig(
+    legacyReversedPPoG = true,
+    useReversedPpogV2 = true,
+)
 
 // Platform has no desktop case yet (see docs/ubuntu-touch-poc-plan.md); Android is the closer
 // fit of the two existing values for feature-flag purposes until a real Jvm/Linux case is added.

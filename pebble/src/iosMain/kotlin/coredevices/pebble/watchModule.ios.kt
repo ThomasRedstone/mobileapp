@@ -14,10 +14,13 @@ import coredevices.pebble.actions.PebbleHealthActions
 import coredevices.pebble.actions.PebbleWatchInfoActions
 import coredevices.pebble.health.mobileHealthModule
 import coredevices.pebble.weather.mobileWeatherModule
+import io.rebble.libpebblecommon.BleConfig
 import org.koin.dsl.bind
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
+
+internal actual fun defaultBleConfig(): BleConfig = BleConfig()
 
 actual val platformWatchModule: Module = module {
     includes(mobileHealthModule, mobileWeatherModule)

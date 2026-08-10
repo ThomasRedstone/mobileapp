@@ -3,10 +3,13 @@ package coredevices.pebble
 import android.content.Context
 import coredevices.pebble.health.mobileHealthModule
 import coredevices.pebble.weather.mobileWeatherModule
+import io.rebble.libpebblecommon.BleConfig
 import io.rebble.libpebblecommon.connection.AppContext
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
+
+internal actual fun defaultBleConfig(): BleConfig = BleConfig()
 
 actual val platformWatchModule: Module = module {
     includes(mobileHealthModule, mobileWeatherModule)
