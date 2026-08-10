@@ -1,4 +1,71 @@
-# Phase 6 Handover: Confined GUI + real D-Bus BLE, state as of 2026-08-10 (session 3)
+# Phase 6 Handover: Confined GUI + real D-Bus BLE, state as of 2026-08-10 (session 4)
+
+## Session 4 update: the AppArmor wall is real, but it's not a dead end — it's patchable
+
+Session 3 (below) concluded local GATT server hosting was architecturally impossible under
+confinement, based on the standard `bluetooth` policy group's dbus rules only granting `send` to
+`org.bluez`, never `receive` on objects this app exports. **That's still true for the standard
+policy group alone** — but the compiled AppArmor profile on-device
+(`/var/lib/apparmor/profiles/click_<pkg>`) is plain, human-editable policy source, not a sealed
+binary, and this device already has a sanctioned root-action mechanism (`pm payload`) used
+throughout this whole PoC for exactly this kind of AppArmor profile work. Patched in one
+additional rule after the bluetooth policy group's block and reloaded with `apparmor_parser -r`:
+```
+dbus (receive)
+    bus=system
+    path="/{,io/rebble/pebble/ppog/**}"
+    peer=(label=unconfined),
+```
+(scoped to just this app's own exported object tree — not a blanket grant). **Confirmed working**:
+`RegisterApplication` now succeeds confined, `GetManagedObjects()` gets called by bluetoothd and
+returns all 5 exported objects, no AppArmor denials, no error. Local GATT server hosting *is*
+possible under Click confinement after all — the `bluetooth` policy group alone just doesn't cover
+it, and needs this one supplementary rule applied on-device.
+
+**This isn't expressible in the click's own `coreapp.apparmor` manifest** (that only supports
+`policy_groups`/`policy_version`, not raw custom dbus rules), so it doesn't survive a normal
+`clickable build`+install — it has to be reapplied after every version bump, same as the AppArmor
+profile *load* step already was. Folded it into that same step (see the updated iteration loop
+below) rather than treating it as a separate thing. A real production shape would want either a
+proper UBports policy-group feature request (a "ble-gatt-server" or similar policy group) or
+confirmation that a click can ship a custom local AppArmor abstraction file that survives normal
+installs — neither investigated further this session, out of scope for a PoC.
+
+**Also resolved: the earlier "does the actual watch support reversed PPoG" question, from the
+open-source firmware side** (Pebble Time 2 isn't paired to this phone yet, so it couldn't be
+answered by a live connection). Cloned `coredevices/PebbleOS` and `pebble-dev/pebble-firmware`
+(the current, nimble-based rewrite) — reversed PPoG V2 (`0x40000000`, matching the app's
+`PPOGATT_WATCH_SERVER_V2_SERVICE`) is implemented in `src/bluetooth-fw/nimble/ppog_reversed_service.c`,
+but only `obelix`/`asterix`/`getafix`-class (new, post-2024 Core Devices) hardware builds against
+that backend — there's no `robert` (original 2016 Pebble Time 2 hardware) board in either repo, and
+the legacy V1 reversed-PPoG UUID (`0x30000003`) is defined in `pebble_bt.h` but has no
+implementation anywhere in either repo. Checked Pebble's own blog
+([`Pebble Mega Update - July 2026`](https://repebble.com/blog/pebble-mega-update-july-2026)) for
+the real answer: reverse PPoGATT is an **in-progress rollout**, and as of that post only **Pebble
+Round 2's *recovery* firmware** has the upgrade — Pebble Time 2 isn't mentioned as having it yet,
+in either recovery or normal firmware. **Conclusion: this specific watch almost certainly does not
+support reversed PPoG yet.** Good news is it no longer matters as much — forward PPoG (the local
+GATT server path) now works confined via the AppArmor patch above, so this app doesn't need to wait
+on that firmware rollout to reach this watch specifically. The `useReversedPpogV2`/
+`legacyReversedPPoG` flags flipped on for desktop last session are still worth keeping (harmless,
+and correct for any watch that *does* support it — reversed is genuinely simpler when available),
+but forward PPoG is what this watch will actually use.
+
+**Still not proven: an actual end-to-end connection.** GATT server registration succeeding is real
+progress but is necessary, not sufficient — `bluetoothctl devices Bonded` still shows zero Pebble
+watches bonded to this phone. Next real step is unchanged from session 3: pair the watch through
+the app's UI (confirmed rendering/running confined via `lomiri-app-launch`) with physical access to
+both phone and watch, then watch the log for `PebbleBle`'s forward-PPoG path
+(`gattServerManager.registerDevice()` should now return `true`) and a real connected session.
+
+Current staged version: **0.1.15**. AppArmor patch payload IDs on-device:
+`aapatch-gatt-recv-2` (the one actually applied; `aapatch-gatt-recv-1` was the broader first draft,
+superseded).
+
+---
+
+# Original Phase 6 Handover (session 3, kept for context — see session 4 update above for the
+# corrected conclusion)
 
 ## Session 3 update: local GATT server hosting is architecturally blocked
 
@@ -207,11 +274,38 @@ cd ubuntuTouchApp && clickable build --arch arm64 --accept-review-errors
 /home/tom/own/phone-manager/dist/pm --ssh 100.87.156.48 push \
   build/aarch64-linux-gnu/app/coreapp.tomredstone_<version>_arm64.click
 
-# 5. Load AppArmor profile (pm payload, needed every version bump):
+# 5. Load AppArmor profile, WITH the supplementary GATT-server receive rule patched in
+# (pm payload, needed every version bump - this rule isn't expressible in coreapp.apparmor's
+# policy_groups, see "session 4 update" above):
 mkdir -p /tmp/aaload && cat > /tmp/aaload/install.sh <<'EOF'
 #!/bin/sh
 set -e
-apparmor_parser -r /var/lib/apparmor/profiles/click_coreapp.tomredstone_coreapp_<version>
+PROFILE=/var/lib/apparmor/profiles/click_coreapp.tomredstone_coreapp_<version>
+python3 - "$PROFILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+marker = '      peer=(label=unconfined),\n\n  # Description: Can access the network'
+insert = (
+    '      peer=(label=unconfined),\n\n'
+    '  # Allow bluetoothd to call into our own exported GATT server objects\n'
+    '  # (RegisterApplication walks these via GetManagedObjects, then\n'
+    '  # ReadValue/WriteValue/StartNotify/StopNotify per characteristic) - scoped\n'
+    '  # to just our own exported object tree, not a blanket grant.\n'
+    '  dbus (receive)\n'
+    '      bus=system\n'
+    '      path="/{,io/rebble/pebble/ppog/**}"\n'
+    '      peer=(label=unconfined),\n\n'
+    '  # Description: Can access the network'
+)
+if marker not in content:
+    sys.exit("marker not found - has the bluetooth policy group block moved/changed?")
+content = content.replace(marker, insert, 1)
+with open(path, 'w') as f:
+    f.write(content)
+PYEOF
+apparmor_parser -r "$PROFILE"
 EOF
 chmod +x /tmp/aaload/install.sh
 tar czf /tmp/aaload.tar.gz -C /tmp/aaload install.sh
