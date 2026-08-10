@@ -4,70 +4,162 @@ import co.touchlab.kermit.Logger
 import io.rebble.libpebblecommon.BleConfigFlow
 import io.rebble.libpebblecommon.connection.AppContext
 import io.rebble.libpebblecommon.connection.PebbleBleIdentifier
+import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.FAKE_SERVICE_UUID
+import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.META_CHARACTERISTIC_SERVER
+import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOGATT_DEVICE_CHARACTERISTIC_SERVER
+import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOGATT_DEVICE_SERVICE_UUID_SERVER
+import io.rebble.libpebblecommon.connection.bt.ble.pebble.SERVER_META_RESPONSE
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.buildSystemBusConnection
 import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import java.io.File
+import org.freedesktop.dbus.DBusPath
+import org.freedesktop.dbus.annotations.DBusInterfaceName
+import org.freedesktop.dbus.connections.impl.DBusConnection
+import org.freedesktop.dbus.interfaces.DBusInterface
+import org.freedesktop.dbus.interfaces.ObjectManager
+import org.freedesktop.dbus.interfaces.Properties
+import org.freedesktop.dbus.types.Variant
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
- * Hosts the real GATT server via a persistent Python companion process
- * (`gatt_server_companion.py`, bundled as a jvmMain resource) speaking
- * dbus-python to BlueZ, driven over stdin/stdout line-delimited JSON.
- *
- * Not `dbus-java`: its SASL EXTERNAL auth sends the wrong UID against this
- * platform's BlueZ/dbus-daemon (traced at the syscall level — a genuine
- * upstream bug). Not `busctl`: it can only invoke methods on other
- * services, not export/host object paths of our own, which a GATT server
- * needs. dbus-python + a GLib mainloop is the one binding proven reliable
- * here during the Ubuntu Touch PoC (docs/ubuntu-touch-poc-plan.md).
+ * Hosts the real GATT server directly over `dbus-java`, exporting the object paths BlueZ needs
+ * (`org.bluez.GattManager1.RegisterApplication`) rather than shelling out to a subprocess -
+ * exec of system binaries (a Python companion driving `dbus-python`, the previous approach) is
+ * denied under Click confinement, same as `busctl` was. Service/characteristic layout is ported
+ * byte-for-byte from `GattServer.android.kt`/`LEConstants.kt`/`PebbleBle.android.kt`.
  */
 private val logger = Logger.withTag("GattServer")
+
+private const val GATT_APP_PATH = "/io/rebble/pebble/ppog"
+private const val ADAPTER_PATH = "/org/bluez/hci0"
+
+@DBusInterfaceName("org.bluez.GattManager1")
+internal interface GattManager1 : DBusInterface {
+    fun RegisterApplication(application: DBusPath, options: Map<String, Variant<*>>)
+    fun UnregisterApplication(application: DBusPath)
+}
+
+@DBusInterfaceName("org.bluez.GattService1")
+internal interface GattService1 : DBusInterface
+
+@DBusInterfaceName("org.bluez.GattCharacteristic1")
+internal interface GattCharacteristic1Server : DBusInterface {
+    fun ReadValue(options: Map<String, Variant<*>>): ByteArray
+    fun WriteValue(value: ByteArray, options: Map<String, Variant<*>>)
+    fun StartNotify()
+    fun StopNotify()
+}
+
+// BlueZ passes the connecting device as an object path
+// (/org/bluez/hci0/dev_XX_XX_XX_XX_XX_XX) under the "device" key, not a MAC string - convert to
+// the colon-separated address the rest of the app (PebbleBleIdentifier) expects.
+private fun deviceAddressFromOptions(options: Map<String, Variant<*>>): String {
+    val path = (options["device"]?.value as? DBusPath)?.path ?: return ""
+    val marker = "dev_"
+    val idx = path.indexOf(marker)
+    if (idx == -1) return ""
+    return path.substring(idx + marker.length).replace('_', ':')
+}
+
+internal class ExportedService(
+    val path: String,
+    private val uuid: String,
+    private val characteristicPaths: List<String>,
+) : GattService1, Properties {
+    override fun getObjectPath() = path
+    override fun <A> Get(interfaceName: String, property: String): A =
+        throw UnsupportedOperationException()
+    override fun <A> Set(interfaceName: String, property: String, value: A) =
+        throw UnsupportedOperationException()
+    override fun GetAll(interfaceName: String): Map<String, Variant<*>> = mapOf(
+        "UUID" to Variant(uuid),
+        "Primary" to Variant(true),
+        "Characteristics" to Variant(characteristicPaths.map { DBusPath(it) }, "ao"),
+    )
+}
+
+internal class ExportedCharacteristic(
+    val path: String,
+    val uuid: String,
+    private val servicePath: String,
+    private val flags: List<String>,
+    initialValue: ByteArray = ByteArray(0),
+) : GattCharacteristic1Server, Properties {
+    @Volatile var value: ByteArray = initialValue
+    var onReadRequested: (device: String) -> Unit = {}
+    var onWrite: (device: String, value: ByteArray) -> Unit = { _, _ -> }
+
+    override fun getObjectPath() = path
+
+    // Synchronous, matching the proven prototype: our characteristics (meta response, fake
+    // service) hold a static value set at construction/via a write, so there's no need for an
+    // async round-trip before answering BlueZ - onReadRequested fires for observability/future
+    // dynamic characteristics, but the reply is always whatever's already cached.
+    override fun ReadValue(options: Map<String, Variant<*>>): ByteArray {
+        onReadRequested(deviceAddressFromOptions(options))
+        return value
+    }
+
+    override fun WriteValue(newValue: ByteArray, options: Map<String, Variant<*>>) {
+        value = newValue
+        onWrite(deviceAddressFromOptions(options), newValue)
+    }
+
+    // No device/options arg here - matches BlueZ's real StartNotify() signature; notifications
+    // are addressed by writing directly to whichever device registerDevice() registered, not by
+    // tracking subscribers here.
+    override fun StartNotify() {
+        logger.d { "notify subscribed: $uuid" }
+    }
+
+    override fun StopNotify() {
+        logger.d { "notify unsubscribed: $uuid" }
+    }
+
+    override fun <A> Get(interfaceName: String, property: String): A =
+        throw UnsupportedOperationException()
+    override fun <A> Set(interfaceName: String, property: String, value: A) =
+        throw UnsupportedOperationException()
+    override fun GetAll(interfaceName: String): Map<String, Variant<*>> = mapOf(
+        "Service" to Variant(DBusPath(servicePath)),
+        "UUID" to Variant(uuid),
+        "Flags" to Variant(flags, "as"),
+        "Descriptors" to Variant(emptyList<DBusPath>(), "ao"),
+    )
+}
+
+internal class ExportedApplication(
+    private val path: String,
+    private val entries: Map<String, Map<String, Map<String, Variant<*>>>>,
+) : ObjectManager {
+    override fun getObjectPath() = path
+    override fun GetManagedObjects(): Map<DBusPath, Map<String, Map<String, Variant<*>>>> {
+        val result = entries.mapKeys { (p, _) -> DBusPath(p) }
+        logger.d { "GetManagedObjects() called, returning ${result.size} objects: ${result.keys}" }
+        return result
+    }
+}
 
 actual fun openGattServer(
     appContext: AppContext,
     bleConfigFlow: BleConfigFlow,
     libPebbleCoroutineScope: LibPebbleCoroutineScope,
-): GattServer? {
-    return try {
-        val scriptFile = extractCompanionScript()
-        val process = ProcessBuilder("python3", scriptFile.absolutePath)
-            .redirectErrorStream(false)
-            .start()
-        GattServer(process, libPebbleCoroutineScope)
-    } catch (e: Exception) {
-        logger.e(e) { "error starting gatt server companion process" }
-        null
-    }
-}
-
-private fun extractCompanionScript(): File {
-    val resource = object {}.javaClass.getResourceAsStream("/gatt_server_companion.py")
-        ?: error("gatt_server_companion.py missing from jvmMain resources")
-    val file = File.createTempFile("gatt_server_companion", ".py")
-    file.deleteOnExit()
-    resource.use { input -> file.outputStream().use { output -> input.copyTo(output) } }
-    return file
-}
+): GattServer? = GattServer(libPebbleCoroutineScope)
 
 actual class GattServer(
-    private val process: Process,
     private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
-    private val writer = process.outputStream.bufferedWriter()
     private val registeredDevices = ConcurrentHashMap<String, SendChannel<ByteArray>>()
+    private val characteristicsByUuid = ConcurrentHashMap<String, ExportedCharacteristic>()
     private var servicesAdded = CompletableDeferred<Unit>()
+    private var connection: DBusConnection? = null
 
     private val _characteristicReadRequest = MutableSharedFlow<ServerCharacteristicReadRequest>(
         extraBufferCapacity = 16,
@@ -75,54 +167,100 @@ actual class GattServer(
     actual val characteristicReadRequest: Flow<ServerCharacteristicReadRequest> = _characteristicReadRequest
 
     actual fun initServer() {
-        libPebbleCoroutineScope.launch(Dispatchers.IO) {
-            process.inputStream.bufferedReader().lineSequence().forEach { line ->
-                handleEvent(line)
-            }
-        }
-    }
+        libPebbleCoroutineScope.launch {
+            try {
+                val conn = buildSystemBusConnection()
+                connection = conn
 
-    private fun handleEvent(line: String) {
-        val event = try {
-            json.parseToJsonElement(line).let { it as? JsonObject } ?: return
-        } catch (e: Exception) {
-            logger.e(e) { "malformed companion event: $line" }
-            return
-        }
-        when (event["event"]?.jsonPrimitive?.content) {
-            "ready" -> logger.d("gatt server companion ready")
-            "services_added" -> servicesAdded.complete(Unit)
-            "read_request" -> {
-                val uuid = event["uuid"]?.jsonPrimitive?.content ?: return
-                val device = event["device"]?.jsonPrimitive?.content.orEmpty()
-                _characteristicReadRequest.tryEmit(
-                    ServerCharacteristicReadRequest(
-                        deviceId = PebbleBleIdentifier(device),
-                        uuid = Uuid.parse(uuid),
-                        respond = { bytes -> setValue(uuid, bytes); true },
-                    )
+                val servicePath = "$GATT_APP_PATH/service0"
+                val fakeServicePath = "$GATT_APP_PATH/service1"
+                val metaCharPath = "$servicePath/char0"
+                val ppogCharPath = "$servicePath/char1"
+                val fakeCharPath = "$fakeServicePath/char0"
+
+                val metaChar = ExportedCharacteristic(
+                    metaCharPath, META_CHARACTERISTIC_SERVER.toString(), servicePath,
+                    listOf("encrypt-read"), SERVER_META_RESPONSE,
                 )
-            }
-            "write" -> {
-                val device = event["device"]?.jsonPrimitive?.content.orEmpty()
-                val dataHex = event["data_hex"]?.jsonPrimitive?.content ?: return
-                val channel = registeredDevices[device]
-                if (channel == null) {
-                    logger.e { "write from unregistered device: $device" }
-                    return
+                metaChar.onReadRequested = { device ->
+                    _characteristicReadRequest.tryEmit(
+                        ServerCharacteristicReadRequest(PebbleBleIdentifier(device), META_CHARACTERISTIC_SERVER) {
+                            metaChar.value = it
+                            true
+                        }
+                    )
                 }
-                val result = channel.trySend(dataHex.hexToByteArray())
-                if (result.isFailure) {
-                    logger.e { "error writing to channel: $result" }
-                }
-            }
-            "notify_subscribed" -> logger.d("notify subscribed: ${event["uuid"]}")
-            "error" -> logger.e { "companion error: ${event["message"]}" }
-        }
-    }
 
-    private fun setValue(uuid: String, data: ByteArray) {
-        sendCommand(buildJsonCommand("set_value", uuid, data))
+                val ppogChar = ExportedCharacteristic(
+                    ppogCharPath, PPOGATT_DEVICE_CHARACTERISTIC_SERVER.toString(), servicePath,
+                    listOf("write-without-response", "notify"),
+                )
+                ppogChar.onWrite = { device, data ->
+                    val channel = registeredDevices[device]
+                    if (channel == null) {
+                        logger.e { "write from unregistered device: $device" }
+                    } else if (channel.trySend(data).isFailure) {
+                        logger.e { "error writing to channel for $device" }
+                    }
+                }
+
+                val fakeChar = ExportedCharacteristic(
+                    fakeCharPath, FAKE_SERVICE_UUID.toString(), fakeServicePath, listOf("encrypt-read"),
+                )
+                fakeChar.onReadRequested = { device ->
+                    _characteristicReadRequest.tryEmit(
+                        ServerCharacteristicReadRequest(PebbleBleIdentifier(device), FAKE_SERVICE_UUID) {
+                            fakeChar.value = it
+                            true
+                        }
+                    )
+                }
+
+                characteristicsByUuid[metaChar.uuid] = metaChar
+                characteristicsByUuid[ppogChar.uuid] = ppogChar
+                characteristicsByUuid[fakeChar.uuid] = fakeChar
+
+                val service = ExportedService(
+                    servicePath, PPOGATT_DEVICE_SERVICE_UUID_SERVER.toString(),
+                    listOf(metaCharPath, ppogCharPath),
+                )
+                val fakeService = ExportedService(
+                    fakeServicePath, FAKE_SERVICE_UUID.toString(), listOf(fakeCharPath),
+                )
+
+                // Matches BlueZ's own test/example-gatt-server object structure exactly
+                // (including the easy-to-miss empty "Descriptors" key on characteristics - omitting
+                // it fails RegisterApplication with "No valid service object found").
+                val entries = mapOf(
+                    servicePath to mapOf("org.bluez.GattService1" to service.GetAll("")),
+                    metaCharPath to mapOf("org.bluez.GattCharacteristic1" to metaChar.GetAll("")),
+                    ppogCharPath to mapOf("org.bluez.GattCharacteristic1" to ppogChar.GetAll("")),
+                    fakeServicePath to mapOf("org.bluez.GattService1" to fakeService.GetAll("")),
+                    fakeCharPath to mapOf("org.bluez.GattCharacteristic1" to fakeChar.GetAll("")),
+                )
+                val application = ExportedApplication("/", entries)
+
+                conn.exportObject("/", application)
+                conn.exportObject(servicePath, service)
+                conn.exportObject(fakeServicePath, fakeService)
+                conn.exportObject(metaCharPath, metaChar)
+                conn.exportObject(ppogCharPath, ppogChar)
+                conn.exportObject(fakeCharPath, fakeChar)
+
+                val gattManager = conn.getRemoteObject(
+                    "org.bluez", ADAPTER_PATH, GattManager1::class.java,
+                )
+                try {
+                    gattManager.RegisterApplication(DBusPath("/"), emptyMap())
+                    servicesAdded.complete(Unit)
+                } catch (e: Exception) {
+                    logger.e(e) { "RegisterApplication failed" }
+                }
+                logger.d("gatt server ready")
+            } catch (e: Exception) {
+                logger.e(e) { "error initializing gatt server" }
+            }
+        }
     }
 
     actual suspend fun addServices() {
@@ -136,8 +274,15 @@ actual class GattServer(
     }
 
     actual suspend fun closeServer() {
-        sendCommand("""{"cmd":"close"}""")
-        process.destroy()
+        val conn = connection ?: return
+        try {
+            conn.getRemoteObject("org.bluez", ADAPTER_PATH, GattManager1::class.java)
+                .UnregisterApplication(DBusPath("/"))
+        } catch (e: Exception) {
+            // Best-effort, matches the previous companion process's own DBusException swallow.
+        }
+        conn.disconnect()
+        connection = null
     }
 
     actual fun registerDevice(identifier: PebbleBleIdentifier, sendChannel: SendChannel<ByteArray>) {
@@ -158,39 +303,27 @@ actual class GattServer(
             logger.e { "sendData: couldn't find registered device: $identifier" }
             return SendResult.Failed
         }
+        val conn = connection ?: return SendResult.Failed
+        val char = characteristicsByUuid[characteristicUuid.toString()] ?: run {
+            logger.e { "sendData: unknown characteristic: $characteristicUuid" }
+            return SendResult.Failed
+        }
         // Best-effort: unlike Android's notifyCharacteristicChanged, BlueZ's
         // PropertiesChanged-based notify has no per-send completion callback
         // reaching us here, so this can't distinguish "sent" from "actually
         // delivered" the way the Android GattServer's writing/timeout tracking
         // does.
-        return if (sendCommand(buildJsonCommand("notify", characteristicUuid.toString(), data))) {
+        return try {
+            char.value = data
+            conn.sendMessage(
+                Properties.PropertiesChanged(char.path, "org.bluez.GattCharacteristic1", mapOf("Value" to Variant(data)), emptyList())
+            )
             SendResult.Success
-        } else {
+        } catch (e: Exception) {
+            logger.e(e) { "error sending notify" }
             SendResult.Failed
         }
     }
 
     actual fun wasRestoredWithSubscribedCentral(): Boolean = false
-
-    private fun sendCommand(commandJson: String): Boolean {
-        return try {
-            synchronized(writer) {
-                writer.write(commandJson)
-                writer.newLine()
-                writer.flush()
-            }
-            true
-        } catch (e: Exception) {
-            logger.e(e) { "error writing command to gatt server companion" }
-            false
-        }
-    }
-
-    private fun buildJsonCommand(cmd: String, uuid: String, data: ByteArray): String {
-        val dataHex = data.joinToString("") { "%02x".format(it) }
-        return """{"cmd":"$cmd","uuid":"$uuid","data_hex":"$dataHex"}"""
-    }
-
-    private fun String.hexToByteArray(): ByteArray =
-        ByteArray(length / 2) { i -> substring(i * 2, i * 2 + 2).toInt(16).toByte() }
 }
