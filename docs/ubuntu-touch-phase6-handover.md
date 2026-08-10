@@ -31,25 +31,27 @@ proper UBports policy-group feature request (a "ble-gatt-server" or similar poli
 confirmation that a click can ship a custom local AppArmor abstraction file that survives normal
 installs — neither investigated further this session, out of scope for a PoC.
 
-**Also resolved: the earlier "does the actual watch support reversed PPoG" question, from the
-open-source firmware side** (Pebble Time 2 isn't paired to this phone yet, so it couldn't be
-answered by a live connection). Cloned `coredevices/PebbleOS` and `pebble-dev/pebble-firmware`
-(the current, nimble-based rewrite) — reversed PPoG V2 (`0x40000000`, matching the app's
-`PPOGATT_WATCH_SERVER_V2_SERVICE`) is implemented in `src/bluetooth-fw/nimble/ppog_reversed_service.c`,
-but only `obelix`/`asterix`/`getafix`-class (new, post-2024 Core Devices) hardware builds against
-that backend — there's no `robert` (original 2016 Pebble Time 2 hardware) board in either repo, and
-the legacy V1 reversed-PPoG UUID (`0x30000003`) is defined in `pebble_bt.h` but has no
-implementation anywhere in either repo. Checked Pebble's own blog
-([`Pebble Mega Update - July 2026`](https://repebble.com/blog/pebble-mega-update-july-2026)) for
-the real answer: reverse PPoGATT is an **in-progress rollout**, and as of that post only **Pebble
-Round 2's *recovery* firmware** has the upgrade — Pebble Time 2 isn't mentioned as having it yet,
-in either recovery or normal firmware. **Conclusion: this specific watch almost certainly does not
-support reversed PPoG yet.** Good news is it no longer matters as much — forward PPoG (the local
-GATT server path) now works confined via the AppArmor patch above, so this app doesn't need to wait
-on that firmware rollout to reach this watch specifically. The `useReversedPpogV2`/
-`legacyReversedPPoG` flags flipped on for desktop last session are still worth keeping (harmless,
-and correct for any watch that *does* support it — reversed is genuinely simpler when available),
-but forward PPoG is what this watch will actually use.
+**Also investigated (and initially got wrong) the "does the actual watch support reversed PPoG"
+question from the open-source firmware side.** First pass wrongly assumed this watch was the
+original 2016 "Robert" hardware — it isn't. `docs/ubuntu-touch-poc-plan.md:972` has the real,
+already-logged answer from an earlier successful connection in this PoC: `watchType=obelix_pvt
+runningFwVersion=v4.23.0`. This *is* the new, post-2024 Core Devices hardware (`CORE_OBELIX_PVT`),
+which `boards/obelix` in `coredevices/PebbleOS` confirms builds against the `nimble` Bluetooth
+backend — the only real (non-qemu/stub) backend in the repo, so obelix has no other option.
+`src/bluetooth-fw/nimble/ppog_reversed_service.c` implements reversed PPoG V2
+(`0x40000000`, matching the app's `PPOGATT_WATCH_SERVER_V2_SERVICE`) — but `git log` shows it was
+added in commit `164be9e` ("bluetooth: add reversed PPoG transport"), first released in **tag
+v4.24.0** — one version *after* the `v4.23.0` this watch was running at last connection. So:
+**whether this watch supports reversed PPoG today depends entirely on whether it's auto-updated
+past v4.24.0 since then** — plausible (normal watches pull OTA firmware updates automatically) but
+not confirmed. (Pebble's July 2026 blog post about reverse PPoGATT rollout status describes a
+*different* migration — upgrading *recovery* firmware on the installed base of *older*,
+pre-Obelix watches for iOS AccessorySetupKit support — not relevant to Obelix's normal firmware,
+which got this natively in a straightforward release.) Either way it no longer blocks progress:
+forward PPoG (the local GATT server path) now works confined via the AppArmor patch above,
+regardless of which the watch ends up using. The `useReversedPpogV2`/`legacyReversedPPoG` flags
+flipped on for desktop last session are worth keeping either way — harmless if unused, and reversed
+is genuinely simpler when available.
 
 **Still not proven: an actual end-to-end connection.** GATT server registration succeeding is real
 progress but is necessary, not sufficient — `bluetoothctl devices Bonded` still shows zero Pebble
