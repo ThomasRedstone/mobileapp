@@ -287,6 +287,13 @@ compose.desktop {
         nativeDistributions {
             packageName = "coreapp"
 
+            // dbus-java's SASL handshake always calls getUserId() to compute an OptionalLong
+            // fallback (Java evaluates orElse()'s argument eagerly, even when the configured
+            // saslUid makes the fallback unused) - jdeps' static analysis of the jars misses
+            // this JDK-internal dependency, so jlink trims it out of the runtime image unless
+            // named explicitly.
+            modules("jdk.security.auth")
+
             // Baked into the generated jpackage .cfg's [JavaOptions], applied before the JVM
             // starts - the only reliable way to override java.io.tmpdir for JDK-internal code
             // (androidx.sqlite's bundled driver extracts a native lib via java.nio.file.Files,
