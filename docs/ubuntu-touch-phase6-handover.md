@@ -1,175 +1,191 @@
-# Phase 6 Handover: Click packaging, state as of 2026-08-10
+# Phase 6 Handover: Confined GUI + real D-Bus BLE, state as of 2026-08-10 (session 3)
 
-Written to reset context and pick straight back up. This is a **how-to-continue** doc — for the
-full narrative/investigation history (why decisions were made, dead ends, evidence), see
-`docs/ubuntu-touch-poc-plan.md` (long; search it by section header, don't read start to end).
+## Session 3 update: local GATT server hosting is architecturally blocked
+
+Session 2 (below) found that pairing/connecting a real watch actually requires the local GATT
+server (`GattServer.jvm.kt`) to register successfully — `PebbleBle.kt` calls
+`gattServerManager.registerDevice()` *before* attempting pairing whenever `useReversedPpogV2`/
+`legacyReversedPPoG` are both off (the desktop defaults), and fails the whole connection with
+`RegisterGattServer` if that returns false.
+
+**Rewrote `GattServer.jvm.kt` from the ground up in pure `dbus-java`** (exporting
+`org.bluez.GattManager1`/`GattService1`/`GattCharacteristic1`/`ObjectManager` object paths
+directly, no subprocess), replacing the old Python/`dbus-python` companion script (deleted:
+`gatt_server_companion.py`), since subprocess exec is denied under confinement the same way
+`busctl` was. Two real bugs found and fixed along the way:
+- `AbstractConnection.exportObject` requires exported interfaces to be **public** — Kotlin
+  `private interface` compiles to non-public bytecode; had to be `internal` (still public at the
+  JVM level, unlike `private`).
+- `dbus-java`'s inherited `AbstractConnectionBase.sendMessage(Message)` (not `AbstractConnection`
+  itself) is how you emit a `Properties.PropertiesChanged` signal from an exported object —
+  findable by introspecting the class hierarchy, not obvious from `AbstractConnection`'s own
+  method list.
+
+**With those fixed, registration still fails — with a hard wall, not a bug.** Enabled
+`bluetoothd -d` via a temporary systemd drop-in (reverted after) and read the kernel audit log
+directly:
+```
+apparmor="DENIED" operation="dbus_method_call" path="/" interface="org.freedesktop.DBus.ObjectManager"
+member="GetManagedObjects" mask="receive" peer_pid=<bluetoothd> peer_label="unconfined"
+```
+Checked the actual `bluetooth` policy group text on-device
+(`/usr/share/apparmor/easyprof/policygroups/ubuntu/2404.1/bluetooth`): its dbus rules only grant
+`send`+`receive` to peer name `org.bluez*`, `receive` from `/org/bluez/**` paths, and `receive` of
+exactly `InterfacesAdded`/`InterfacesRemoved` signals at `/`. **There is no rule letting BlueZ call
+method calls into an object path this app hosts.** The policy group is built for being a GATT
+*client* only. This means **hosting a local BlueZ GATT server from a confined Click app is not
+possible on Ubuntu Touch**, in any implementation language — the original Python approach would
+have hit the identical wall had it ever been tested confined (it was seemingly only proven working
+unconfined).
+
+**Pivoted to reversed PPoG as the only viable path** (the watch hosts the GATT server; this app
+only subscribes as a client — no local server needed at all). Added a proper per-platform DI seam
+for this rather than a one-off hack: `defaultBleConfig()` is now `expect`/`actual` in
+`pebble/src/{common,android,ios,jvm}Main/kotlin/coredevices/pebble/watchModule*.kt`
+(`watchModule.kt`'s `factory { BleConfig() }` → `factory { defaultBleConfig() }`), with the JVM
+actual flipping `legacyReversedPPoG`/`useReversedPpogV2` both to `true`. Android/iOS unaffected
+(same `BleConfig()` defaults as before). `GattServer.jvm.kt` is left in place (still eagerly opened
+per existing architecture, still fails confined, still non-fatal/caught) rather than ripped out —
+it's real, correct, working code, just unusable *under confinement specifically*; useful again for
+any future unconfined/system-service deployment shape, and for any watch that turns out to need
+forward PPoG.
+
+**Not yet known: whether the actual watch (Pebble Time 2 / `WatchType.EMERY`) supports reversed
+PPoG at all.** `reversedConfig` in `PebbleBle.kt` is chosen from the watch's *actually discovered*
+GATT services at connect time (`PPOGATT_WATCH_SERVER_V2_SERVICE` / `PPOGATT_DEVICE_SERVICE_UUID_CLIENT`
+UUIDs), not from watch type — this can only be answered by a real connection attempt. That needs a
+human: `bluetoothctl devices Bonded` shows zero Pebble watches currently bonded to this phone at
+all, so pairing has to happen through the app's UI (confirmed rendering/running confined via
+`lomiri-app-launch` in session 2) with physical access to both phone and watch. **This is the
+actual next step, and it's not something to fake or force autonomously.**
+
+Current staged version: **0.1.15**.
+
+---
+
+# Original Phase 6 Handover (session 2, kept for full context)
+
+Written to reset context and pick straight back up. For the full narrative/investigation history
+(why decisions were made, dead ends, evidence), see `docs/ubuntu-touch-poc-plan.md` (long; search
+it by section header, don't read start to end). This doc supersedes the previous handover — that
+one's "what's next" items 1 and 2 are now substantially done; see below.
 
 ## Where things stand
 
-**Goal** (`/goal`): "get phase 6 built using clickable." **Substantially achieved**: a real
-`.click` builds via the actual `clickable` tool, installs on-device, loads a real AppArmor profile,
-and — confined, headless — the app starts up completely (Firebase, Koin DI, Room DB, WatchManager,
-GattServerManager, permission checks, calendar sync) with zero failures other than the *expected*
-missing `$DISPLAY` (no X11 session was given to the test). That's the one dimension left untested.
+**Both of the previous handover's top-priority items are done:**
 
-**Two other work streams, deliberately parked, not urgent right now:**
-- BLE reconnect-after-drop stalls (sometimes minutes, sometimes 20+) — root-caused: this watch
-  class (`WatchType.EMERY`, this Pebble Time 2) doesn't do general discoverable advertising while
-  disconnected, confirmed by 36s of continuous active scanning seeing zero RSSI updates, and
-  matched against `advertisesWhenNotConnected()` in `PebbleBle.kt`, which already encodes this.
-  Nothing actionable found on the host side; documented as a known limitation, not chased further.
-- Notifications / call accept-reject: tracked in the plan doc's roadmap section, real future work,
-  not started, not blocking anything here.
+1. **X11/Xwayland GUI rendering under Click confinement — confirmed working, real device.**
+   Launched via the actual sanctioned mechanism (`lomiri-app-launch`, not manual `aa-exec`), fully
+   confined (`coreapp.tomredstone_coreapp_0.1.10 (enforce)` per `/proc/<pid>/attr/current`), and a
+   `mirscreencast` capture confirmed real Compose UI rendering on the phone's actual screen at its
+   real resolution (1080x2340) — the onboarding route with its pager dots. **Key finding: X11
+   socket access needs no extra AppArmor policy group at all** — it's already unconfined-reachable
+   under the existing `bluetooth`/`networking` policy groups. GLX hardware acceleration fails
+   (`Cannot create Linux GL context`) but Skiko silently falls back and renders correctly anyway —
+   not investigated further, not blocking.
+2. **Live confined D-Bus BlueZ access — confirmed working.** `BondedWatchSeeder`'s
+   `ObjectManager.GetManagedObjects()` call over `dbus-java` runs successfully confined, no
+   exceptions, proving the `dbus-java`-over-`bluetooth`-policy-group mechanism that
+   `DbusGattConnector` already relies on for GATT connects is real and works live, not just in
+   theory.
 
-## The build now runs on the workstation, not the phone
+**Getting here required finding and fixing three real, non-obvious bugs** (see "What was fixed"
+below) — none of this worked out of the box; the previous handover's "zero failures" headless
+result was accurate only because that run never reached these code paths.
 
-**Why**: the phone froze and needed a power cycle once this session, plausibly (not proven) from
-the sustained heavy on-device build/AppArmor-reload load. Moved the whole pipeline to the
-workstation (64 cores, 256GB RAM) via QEMU user-mode emulation — durable, not a workaround.
+**Not done, and not fakeable:** an actual live `Device1.Connect()` end-to-end GATT connection to a
+real watch. `bluetoothctl devices Bonded` shows **zero Pebble/Core watches currently bonded to
+this phone** — only unrelated accessories (headphones, a car, a keyboard, a scale). The app's UI
+now genuinely runs confined and on-screen, so pairing is possible through it, but actually pairing
+a watch needs a human with physical access to both the phone screen and the watch (BLE pairing
+prompts, watch-side button presses). **This is the one remaining step for a real end-to-end test**
+— see "What's actually next" below.
 
-**One-time setup already done** (all workstation-local, none of this is in the repo):
-- `qemu-aarch64-static` was already registered in `binfmt_misc` on this machine — nothing to do.
-- Aarch64 JDKs fetched to `/home/tom/.jdks/`: `jdk-21.0.12+8` (Temurin) and `jdk-17.0.20+8`
-  (needed because `:blobannotations`, `:blobdbgen`, `:libpebble3` pin Gradle toolchain 17).
-- `/home/tom/.gradle/gradle.properties` registers both:
-  ```
-  org.gradle.java.installations.paths=/home/tom/.jdks/jdk-21.0.12+8,/home/tom/.jdks/jdk-17.0.20+8
-  ```
-- A cross-architecture `objcopy` (needed by `jlink --strip-debug`, and this workstation's native
-  `objcopy` has no aarch64 BFD support) lives at `/home/tom/.jdks/aarch64-tools/objcopy` (symlink
-  to the extracted `binutils-aarch64-linux-gnu` package's `aarch64-linux-gnu-objcopy`).
+## What was fixed this session (all real root causes, not workarounds)
 
-**To build the distributable app image on the workstation:**
-```bash
-cd /home/tom/own/mobileapp
-export JAVA_HOME=/home/tom/.jdks/jdk-21.0.12+8
-export PATH="/home/tom/.jdks/aarch64-tools:$PATH"
-./gradlew :composeApp:createDistributable --no-configuration-cache
-```
-- `--no-configuration-cache` is required — there's an unrelated Gradle config-cache serialization
-  bug on a Kotlin/Native toolchain path property, unrelated to anything in this project.
-- Takes ~5 min clean, faster incrementally. Output:
-  `composeApp/build/compose/binaries/main/app/coreapp/` (an app-image dir: `bin/coreapp` native
-  launcher, `lib/runtime/` a jlink-trimmed JRE, `lib/app/` the jars). ~260MB.
-- Verify architecture if in doubt: `file composeApp/build/compose/binaries/main/app/coreapp/bin/coreapp`
-  should say `ARM aarch64`, not x86-64.
+### 1. `busctl` subprocess shell-outs are denied under Click confinement
 
-## The Click package: `ubuntuTouchApp/`
+The confined headless test (previous handover's "clean" baseline) had never actually exercised
+scanning, pairing, or adapter-state polling — once it did, every one of them threw
+`Cannot run program "busctl": Permission denied`, matching the already-documented gotcha ("exec of
+arbitrary system binaries is denied under confinement"). `nativeBluetoothStateFlow` polls the
+adapter's `Powered` property to decide whether `WatchManager` may even start scanning
+(`bluetoothStateProvider.state.first { it == BluetoothState.Enabled }`) — so this wasn't cosmetic,
+it silently wedged the whole connection pipeline forever under confinement.
 
-Real files, all committed except the two listed as gitignored:
-- `clickable.yaml` — `builder: custom`, `framework: ubuntu-touch-24.04-1.x` (**not** `24.04-2.x` —
-  that string isn't recognized by this device's `click-apparmor` tooling and silently produces no
-  AppArmor profile at all, a real finding, not a guess).
-- `manifest.json` — `name: "coreapp.tomredstone"`, references `coreapp.apparmor`/`coreapp.desktop`.
-- `coreapp.apparmor` — `policy_groups: ["bluetooth", "networking"]`, `policy_version: 2404.1`.
-- `coreapp.desktop` — `Exec=coreapp-launch.sh`.
-- `coreapp-launch.sh` — sets `COREAPP_DIR_NAME=coreapp.tomredstone` (matches `@{APP_PKGNAME}`, read
-  by `AppDirs`), then execs `coreapp/bin/coreapp`.
-- `coreapp/` — **gitignored**, staged locally by copying the build output (see below), *not* part
-  of the repo (262MB, regenerated every build).
-- `build/` — **gitignored**, `clickable`'s own output dir.
+**Fix:** rewrote all four `BusctlDbus`-dependent files to use `dbus-java` directly, mirroring the
+pattern `DbusGattConnector` (formerly `DbusGattClient.jvm.kt`) already used successfully for GATT
+connects:
+- `BluetoothState.jvm.kt` — adapter `Powered` polling.
+- `Pairing.jvm.kt` — `Device1.Paired`/`Pair()`.
+- `bt/ble/transport/impl/LinuxBleScanner.jvm.kt` — `Adapter1.StartDiscovery`/`StopDiscovery` +
+  `ObjectManager.GetManagedObjects()` (replaces the old `BluezObjectParser` regex text-parsing of
+  `busctl`'s plain-text output with real structured D-Bus data).
+- `BondedWatchSeeder.jvm.kt` — same `GetManagedObjects()` migration.
 
-**To refresh the staged app image and rebuild the `.click`:**
-```bash
-rm -rf /home/tom/own/mobileapp/ubuntuTouchApp/coreapp
-cp -r /home/tom/own/mobileapp/composeApp/build/compose/binaries/main/app/coreapp \
-      /home/tom/own/mobileapp/ubuntuTouchApp/coreapp
-cd /home/tom/own/mobileapp/ubuntuTouchApp
-# bump the version in manifest.json first - each install needs a new version or the daemon errors
-clickable build --arch arm64 --accept-review-errors
-```
-- The `FAIL`/`(NEEDS REVIEW) reserved policy group 'bluetooth'` review output is expected and
-  harmless — the bundled click-reviewer doesn't know this framework, but the `.click` is still
-  produced correctly (same precedent as the separate `ut-sonic-player` project).
-- Output: `ubuntuTouchApp/build/aarch64-linux-gnu/app/coreapp.tomredstone_<version>_arm64.click`.
+Shared plumbing (SASL UID workaround, `Adapter1`/`Device1` interfaces, `BluezDevice` parsing)
+extracted to a new `bt/ble/transport/impl/BluezDbus.jvm.kt`, reused by `DbusGattConnector` too
+(removed its private duplicate). `BusctlDbus.jvm.kt` is deleted — nothing references it anymore.
 
-## Installing and testing on the phone
+### 2. `jdk.security.auth` was trimmed from the jlink runtime image
 
-**This device's own `click install`/`pkcon install-local` path is broken** (no `pkcon` binary, no
-click plugin in PackageKit). Use `phone-manager` instead — a separate real tool at
-`~/own/phone-manager`, already running as a rooted classic snap on the phone (`pmd`), reachable via
-its CLI:
-```bash
-/home/tom/own/phone-manager/dist/pm --ssh 100.87.156.48 push \
-  /home/tom/own/mobileapp/ubuntuTouchApp/build/aarch64-linux-gnu/app/coreapp.tomredstone_<version>_arm64.click
-```
-This genuinely runs `click install` as root and un/re-installs the version.
+Real, was-always-there bug newly surfaced now that `dbus-java` code paths actually run confined:
+`dbus-java`'s SASL handshake calls `SASL.getUserId()` unconditionally — `OptionalLong.orElse(x)`
+evaluates `x` eagerly in Java even when the optional is present, so the app's own explicit
+`withSaslUid(...)` override doesn't skip the call. `getUserId()` needs
+`com.sun.security.auth.module.UnixSystem`, which lives in the `jdk.security.auth` JDK module —
+absent from the jlink-trimmed runtime `createDistributable` bakes in (jdeps' static analysis
+apparently doesn't catch this dependency). Manifested as `NoClassDefFoundError` at the first live
+`dbus-java` connection attempt.
 
-**The AppArmor profile does NOT load automatically** off this install path (`aa-clickhook` doesn't
-fire). Load it manually via a `pm payload` (the sanctioned one-off-root-action mechanism):
-```bash
-mkdir -p /tmp/aaload && cat > /tmp/aaload/install.sh <<'EOF'
-#!/bin/sh
-set -e
-apparmor_parser -r /var/lib/apparmor/profiles/click_coreapp.tomredstone_coreapp_<version>
-EOF
-chmod +x /tmp/aaload/install.sh
-tar czf /tmp/aaload.tar.gz -C /tmp/aaload install.sh
-/home/tom/own/phone-manager/dist/pm --ssh 100.87.156.48 payload --id aaload-vX --script install.sh /tmp/aaload.tar.gz
-```
-**Careful with the profile name**: the compiled file is named `click_coreapp.tomredstone_coreapp_<version>`,
-but the AppArmor profile *declared inside it* is `coreapp.tomredstone_coreapp_<version>` (no `click_`
-prefix) — that's the name `aa-exec -p` needs, not the filename.
+**Fix:** `composeApp/build.gradle.kts` → `nativeDistributions { modules("jdk.security.auth") }`.
+Verified present in `lib/runtime/release`'s `MODULES=` line after rebuild.
 
-**Confined test run** (no display — see "what's next" below for the real GUI test):
-```bash
-ssh 100.87.156.48 "cd /opt/click.ubuntu.com/coreapp.tomredstone/<version> && \
-  aa-exec -p coreapp.tomredstone_coreapp_<version> ./coreapp-launch.sh"
-```
-Expect it to run cleanly through Firebase/Koin/Room/WatchManager/permissions/calendar-sync and then
-fail on `HeadlessException: No X11 DISPLAY variable was set` — that's the current, expected,
-correct end state. Anything failing *before* that line is a real regression.
+### 3. `coreapp-launch.sh` needs an explicit `$DISPLAY`
 
-Useful before each fresh test: `rm -rf ~/.cache/coreapp.tomredstone ~/.local/share/coreapp.tomredstone /tmp/libpebble3.db*`
-on the phone, to rule out stale state from a previous version's run.
+`lomiri-app-launch` doesn't set `$DISPLAY` for Click apps (they're expected to be Wayland-native).
+The live session already runs a rootless Xwayland instance for exactly this purpose (same one
+Libertine/X11 apps used in the earlier PoC phase) — confirmed its socket exists
+(`/tmp/.X11-unix/X1`) and hardcoded `export DISPLAY=":1"` in the launch script. Real device is
+single-user/single-session, so this is the same class of accepted hardcode as the existing
+`$HOME`-based paths elsewhere in this package — **but unlike those, a display number isn't
+guaranteed stable across reboots/sessions the way `$HOME` is.** If a future confined GUI launch
+fails with `HeadlessException` again after a device reboot, check `ps aux | grep Xwayland` for the
+current display number first before assuming a regression.
 
-## Real gotchas worth not re-discovering
+## New known gotcha (found, not fixed — separate, larger effort)
 
-- **Exec of arbitrary system binaries is denied under confinement** — `busctl`, `mkdir`, `id`,
-  `dirname` all fail with `Permission denied` even though the *paths* they'd touch are writable.
-  Only in-process syscalls (a JVM's own `File.mkdirs()`, Python's `os.makedirs()`) work. Any fix
-  that shells out to a subprocess needs rethinking for this environment.
-- **`java.io.tmpdir` cannot be reliably overridden at runtime** for JDK-internal code
-  (`androidx.sqlite`'s bundled native driver, specifically) — confirmed empirically twice that a
-  runtime `System.setProperty` loses whatever race is happening internally, and `JDK_JAVA_OPTIONS`
-  is not read by jpackage's native launcher (it bakes static `java-options=` lines into a `.cfg`
-  file at package time). The only thing that reliably works: `compose.desktop.application.nativeDistributions.jvmArgs`
-  in `composeApp/build.gradle.kts`, which *does* get baked into that `.cfg`.
-- **A plain environment variable (`$TMPDIR`, `$COREAPP_DIR_NAME`) is fine** for code that reads it
-  directly (`Database.jvm.kt`, `AppDirs`) — the restriction above is specifically about JVM system
-  properties and third-party/JDK code that doesn't consult env vars.
-- **Directory creation needs the target's *parent* to already permit writes** — AppArmor denies
-  creating a brand-new directory whose parent isn't separately writable (hit this with
-  `~/.local/share/<pkg>/` on first-ever run; confirmed the parent `~/.local/share/` and `~/.cache/`
-  themselves are fine to create *subdirs* under, just needed to go through a real syscall, not a
-  shelled-out `mkdir`).
-- **`dbus-java`'s `RemoteObject` addresses every call by the literal string passed to
-  `getRemoteObject(...)`**, confirmed by disassembling the actual bundled jar — no
-  resolve-to-unique-connection-name caching like `python-dbus` does. This is *why* `DbusGattConnector`
-  should already work fine under the `bluetooth` policy group's `peer=(name="org.bluez{,.*}")` rule
-  — but this hasn't been verified with a live confined `Device1.Connect()` call yet (see below).
-- **Real device is single-user**, home always `/home/phablet` — hardcoding that path (as the
-  `java.io.tmpdir` jvmArg does) is a deliberate, accepted call, not an oversight.
+**`GattServer.jvm.kt` still shells out to `python3`** (`gatt_server_companion.py`, a bundled
+resource) to host the local BlueZ GATT *server* (peripheral role — the phone exposing services for
+something else to connect to, as opposed to `DbusGattConnector`'s GATT *client* role connecting
+out to a watch). Denied under confinement the same way `busctl` was:
+`Cannot run program "python3": Permission denied`. **This failure is caught and logged, not
+fatal** — `GattServerManager.openIfNeeded()` just gets `null` back and the app keeps running
+normally; confirmed the confined GUI run reaches the onboarding screen fine despite it. Not fixed
+this session: unlike the `busctl` case, `dbus-java` can't easily replace this — exporting D-Bus
+object paths (what a GATT *server* needs) is a fundamentally different, harder capability than the
+method-calling `dbus-java` already does well for the client side. Real future work if the app ever
+needs to act as a BLE peripheral under Click confinement (check whether current features actually
+depend on this before investing time here).
+
+## Versions / current build state
+
+Current staged version is **0.1.10** (`ubuntuTouchApp/manifest.json`). The full iteration loop
+(build → restage → package → push → load AppArmor → test) is unchanged from the previous
+handover — see below, still accurate.
 
 ## What's actually next, in priority order
 
-1. **Verify `DbusGattConnector` really works confined, live.** Strong indirect evidence (bytecode
-   disassembly + the `blecheck` low-level-message test both point the same way) but no direct
-   confirmation of a real `Device1.Connect()` succeeding from inside *this* package. The blocker
-   last time was the jpackage runtime having no general-purpose `java` binary to run an ad hoc test
-   class with — either extend `coreapp-launch.sh`-style testing with a purpose-built runnable jar
-   (`Main-Class` manifest, run via the runtime's `lib/jexec`), or just get far enough into a real
-   app run (next item) that `DbusGattConnector.connect()` fires as part of normal `WatchManager`
-   startup and watch the log for a real GATT connection.
-2. **Confined GUI launch.** Nothing here has been tested with an actual `$DISPLAY` yet. Real
-   open questions: does Xwayland socket access even need a policy group, or is X11 typically
-   unconfined-reachable already (check `sonic-player`'s or another real GUI click's compiled
-   profile for precedent, the same way the `bluetooth` policy group was found); does the app render
-   correctly at this phone's resolution/density under `lomiri-app-launch` (not manual `aa-exec`)
-   the way it did under the old Libertine/Xwayland setup.
-3. Once (1) and (2) both work: a real end-to-end test — confined Click, real display, real BLE
-   connect, watch data flowing. That's the actual finish line for Phase 6.
-4. `google-services.json` sourcing — deferred, not started, lower priority than the above.
+1. **Pair a real watch to this phone, then re-run the confined GUI launch.** This needs a human:
+   open the app (now confirmed to render on-screen under `lomiri-app-launch`), trigger pairing
+   from its UI, accept the prompt on the watch. Once bonded, `BondedWatchSeeder` will pick it up
+   automatically on next launch (confirmed working confined already) and `WatchManager` should
+   attempt a real `DbusGattConnector.connect()` — watch the log for a real GATT connection
+   completing. This is the actual finish line for Phase 6.
+2. `google-services.json` sourcing — deferred, not started, lower priority than the above (was
+   already low priority last handover; unchanged).
+3. If BLE peripheral mode (`GattServer`'s python3 companion) turns out to be needed for any
+   current feature, it needs its own real design work — not a quick fix, see above.
 
 ## Quick reference: full iteration loop
 
@@ -191,12 +207,60 @@ cd ubuntuTouchApp && clickable build --arch arm64 --accept-review-errors
 /home/tom/own/phone-manager/dist/pm --ssh 100.87.156.48 push \
   build/aarch64-linux-gnu/app/coreapp.tomredstone_<version>_arm64.click
 
-# 5. Load AppArmor profile (pm payload, see above) — needed every version bump.
+# 5. Load AppArmor profile (pm payload, needed every version bump):
+mkdir -p /tmp/aaload && cat > /tmp/aaload/install.sh <<'EOF'
+#!/bin/sh
+set -e
+apparmor_parser -r /var/lib/apparmor/profiles/click_coreapp.tomredstone_coreapp_<version>
+EOF
+chmod +x /tmp/aaload/install.sh
+tar czf /tmp/aaload.tar.gz -C /tmp/aaload install.sh
+/home/tom/own/phone-manager/dist/pm --ssh 100.87.156.48 payload --id aaload-vX \
+  --script install.sh /tmp/aaload.tar.gz
 
-# 6. Test confined (see above).
+# 6a. Test headless/confined (quick sanity check, no GUI):
+ssh 100.87.156.48 "cd /opt/click.ubuntu.com/coreapp.tomredstone/<version> && \
+  aa-exec -p coreapp.tomredstone_coreapp_<version> ./coreapp-launch.sh"
+
+# 6b. Test with real GUI, the sanctioned way (needs the phablet session's D-Bus env,
+# not available over a plain ssh shell - pull it from any live session process):
+ssh 100.87.156.48 "export XDG_RUNTIME_DIR=/run/user/32011 \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/32011/bus DISPLAY=:1; \
+  lomiri-app-launch coreapp.tomredstone_coreapp_<version>"
+# check it's really confined: cat /proc/<pid>/attr/current (should say "... (enforce)")
+# to see the screen: mirscreencast -n 1 -f /tmp/screen.rgba --query   (prints WxH)
+#                     mirscreencast -n 1 -f /tmp/screen.rgba          (captures one frame)
+#                     scp it off and decode raw RGBA at the reported WxH (e.g. via Pillow)
+# to stop: find its pid (ps aux | grep coreapp) and kill it directly - no
+# lomiri-app-launch-tool stop on this device (binary doesn't exist here)
 ```
 
-No phone-side build needed anywhere in this loop — the phone only ever receives a finished
-`.click` and runs it. If phone-side *source* also needs to stay in sync for some other reason
-(direct on-device debugging, say), that's a separate `git bundle`/`fetch` step, not required for
-this loop.
+Useful before each fresh test: `rm -rf ~/.cache/coreapp.tomredstone ~/.local/share/coreapp.tomredstone /tmp/libpebble3.db*`
+on the phone, to rule out stale state from a previous version's run.
+
+## Real gotchas worth not re-discovering (carried over, still accurate)
+
+- **Exec of arbitrary system binaries is denied under confinement** — `busctl`, `python3`,
+  `mkdir`, `id`, `dirname` all fail with `Permission denied` even though the *paths* they'd touch
+  are writable. Only in-process syscalls (a JVM's own `File.mkdirs()`,
+  `dbus-java`'s direct D-Bus calls) work. Any fix that shells out to a subprocess needs rethinking
+  for this environment — this bit twice this session alone (`busctl` and `python3`).
+- **`java.io.tmpdir` cannot be reliably overridden at runtime** for JDK-internal code — the only
+  thing that reliably works is `compose.desktop.application.nativeDistributions.jvmArgs`.
+- **A plain environment variable is fine** for code that reads it directly — the restriction above
+  is specifically about JVM system properties and third-party/JDK code that doesn't consult env
+  vars.
+- **jlink's trimmed runtime can silently drop JDK modules that reflection/eager-eval code paths
+  need**, even when static analysis (jdeps) is what Compose's plugin uses to decide what to keep.
+  If a `NoClassDefFoundError` mentions a `com.sun.*`/`sun.*`/`jdk.internal.*` class, check
+  `lib/runtime/release`'s `MODULES=` line before assuming it's an app bug.
+- **`dbus-java`'s `RemoteObject` addresses every call by the literal string passed to
+  `getRemoteObject(...)`** — no resolve-to-unique-connection-name caching like `python-dbus` does.
+- **`lomiri-app-launch` (and its sibling CLI tools) need the phablet session's live
+  `DBUS_SESSION_BUS_ADDRESS`/`XDG_RUNTIME_DIR`** — a plain `ssh` shell doesn't have them; pull them
+  from any long-running session process's `/proc/<pid>/environ` (e.g. one of the
+  `ayatana-indicator-*` services).
+- **Real device is single-user**, home always `/home/phablet` — hardcoding that path is a
+  deliberate, accepted call, not an oversight. The Xwayland `:1` hardcode in `coreapp-launch.sh` is
+  the same idea but *less* durable (survives one boot, not guaranteed across reboots) — see gotcha
+  #3 above.
