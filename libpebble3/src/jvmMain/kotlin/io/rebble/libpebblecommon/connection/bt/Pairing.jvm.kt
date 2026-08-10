@@ -7,37 +7,50 @@ import io.rebble.libpebblecommon.connection.PebbleBtClassicIdentifier
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.ConnectivityWatcher
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_BONDED
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_NONE
-import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.BusctlDbus
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Device1
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.buildSystemBusConnection
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.freedesktop.dbus.interfaces.Properties
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * BlueZ over `busctl` (see [BusctlDbus]) for the BLE bond lifecycle. Real,
- * proven flow on real hardware: `Device1.Pair()` produces pairing prompts
- * on both devices, and `Device1.Paired` flips true once accepted
- * (docs/ubuntu-touch-poc-plan.md).
+ * BlueZ over `dbus-java` for the BLE bond lifecycle. Real, proven flow on real hardware:
+ * `Device1.Pair()` produces pairing prompts on both devices, and `Device1.Paired` flips true
+ * once accepted (docs/ubuntu-touch-poc-plan.md).
  */
 private val logger = Logger.withTag("Pairing")
 private val POLL_INTERVAL = 1.seconds
 
+// Reused across calls rather than opened per poll - SASL handshake overhead per connection is
+// real, and DbusConnectedGattClient already establishes the same "one connection, many calls"
+// pattern for the GATT side.
+private val connection by lazy { buildSystemBusConnection() }
+
 private fun devicePath(identifier: PebbleBleIdentifier): String =
     "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
 
-private fun isPaired(devicePath: String): Boolean {
-    val output = BusctlDbus.getProperty("org.bluez", devicePath, "org.bluez.Device1", "Paired")
-        ?: return false
-    return output.trim().endsWith("true")
+private fun isPaired(devicePath: String): Boolean = try {
+    val props = connection.getRemoteObject("org.bluez", devicePath, Properties::class.java)
+    props.Get<Boolean>("org.bluez.Device1", "Paired") == true
+} catch (e: Exception) {
+    logger.e(e) { "couldn't read Paired for $devicePath" }
+    false
 }
 
 actual fun isBonded(identifier: PebbleBleIdentifier): Boolean = isPaired(devicePath(identifier))
 
 actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
     logger.d("createBond()")
-    val result = BusctlDbus.call("org.bluez", devicePath(identifier), "org.bluez.Device1", "Pair")
-    return result != null
+    return try {
+        connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java).Pair()
+        true
+    } catch (e: Exception) {
+        logger.e(e) { "Pair() failed" }
+        false
+    }
 }
 
 actual fun getBluetoothDevicePairEvents(
@@ -48,8 +61,7 @@ actual fun getBluetoothDevicePairEvents(
 ): Flow<BluetoothDevicePairEvent> = flow {
     val path = devicePath(identifier)
     var lastPaired: Boolean? = null
-    // No D-Bus signal subscription from the JVM side (busctl is call-only,
-    // see BusctlDbus) -- poll the Paired property instead. Adequate for the
+    // Polls the Paired property rather than subscribing to PropertiesChanged - adequate for the
     // bond handshake, which isn't latency-sensitive.
     while (true) {
         val paired = isPaired(path)

@@ -25,14 +25,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.freedesktop.dbus.DBusPath
 import org.freedesktop.dbus.annotations.DBusInterfaceName
 import org.freedesktop.dbus.connections.impl.DBusConnection
-import org.freedesktop.dbus.connections.impl.DBusConnectionBuilder
 import org.freedesktop.dbus.exceptions.DBusException
 import org.freedesktop.dbus.interfaces.DBusInterface
 import org.freedesktop.dbus.interfaces.DBusSigHandler
 import org.freedesktop.dbus.interfaces.ObjectManager
 import org.freedesktop.dbus.interfaces.Properties
 import org.freedesktop.dbus.types.Variant
-import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -52,41 +50,11 @@ private val logger = Logger.withTag("DbusGattClient")
 private fun bluezDevicePath(identifier: PebbleBleIdentifier): String =
     "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
 
-/** The real process UID, read from the kernel rather than trusted from Java (which has no
- *  portable API for it). dbus-java's own EXTERNAL SASL auto-detection sends UID 0 in this
- *  sandboxed environment - a real upstream bug, not anything specific to this app - so the UID
- *  has to be supplied explicitly (`withSaslUid`, dbus-java PR #178). */
-private fun currentUnixUid(): Long? = try {
-    File("/proc/self/status").readLines()
-        .firstOrNull { it.startsWith("Uid:") }
-        ?.split(Regex("\\s+"))
-        ?.getOrNull(1)
-        ?.toLong()
-} catch (e: Exception) {
-    logger.e(e) { "couldn't read real uid from /proc/self/status" }
-    null
-}
-
-private fun buildSystemBusConnection(): DBusConnection {
-    val builder = DBusConnectionBuilder.forSystemBus()
-    currentUnixUid()?.let { uid ->
-        builder.transportConfig().configureSasl().withSaslUid(uid).back()
-    }
-    // dbus-java's default reply timeout is too short for Device1.Connect(): BlueZ blocks that
-    // call until the link genuinely comes up or fails, which routinely takes longer than the
-    // default under real-world retry contention (observed live: consistent NoReply timeouts
-    // during a run of back-to-back reconnects, no correlated BlueZ-side failure).
-    builder.transportConfig().withTimeout(CONNECT_DBUS_TIMEOUT_MS)
-    return builder.build()
-}
-
+// dbus-java's default reply timeout is too short for Device1.Connect(): BlueZ blocks that
+// call until the link genuinely comes up or fails, which routinely takes longer than the
+// default under real-world retry contention (observed live: consistent NoReply timeouts
+// during a run of back-to-back reconnects, no correlated BlueZ-side failure).
 private const val CONNECT_DBUS_TIMEOUT_MS = 30_000
-
-@DBusInterfaceName("org.bluez.Device1")
-private interface Device1 : DBusInterface {
-    fun Connect()
-    fun Disconnect()
-}
 
 @DBusInterfaceName("org.bluez.GattCharacteristic1")
 private interface GattCharacteristic1 : DBusInterface {
@@ -112,7 +80,7 @@ class DbusGattConnector(
 
     override suspend fun connect(): GattConnectionResult {
         val conn = try {
-            buildSystemBusConnection()
+            buildSystemBusConnection(CONNECT_DBUS_TIMEOUT_MS)
         } catch (e: DBusException) {
             logger.e(e) { "couldn't connect to system bus" }
             _disconnected.complete(ConnectionFailureReason.FailedToConnect)
