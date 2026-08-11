@@ -50,12 +50,6 @@ private val logger = Logger.withTag("DbusGattClient")
 private fun bluezDevicePath(identifier: PebbleBleIdentifier): String =
     "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
 
-// dbus-java's default reply timeout is too short for Device1.Connect(): BlueZ blocks that
-// call until the link genuinely comes up or fails, which routinely takes longer than the
-// default under real-world retry contention (observed live: consistent NoReply timeouts
-// during a run of back-to-back reconnects, no correlated BlueZ-side failure).
-private const val CONNECT_DBUS_TIMEOUT_MS = 30_000
-
 @DBusInterfaceName("org.bluez.GattCharacteristic1")
 private interface GattCharacteristic1 : DBusInterface {
     fun ReadValue(options: Map<String, Variant<*>>): ByteArray
@@ -80,7 +74,7 @@ class DbusGattConnector(
 
     override suspend fun connect(): GattConnectionResult {
         val conn = try {
-            buildSystemBusConnection(CONNECT_DBUS_TIMEOUT_MS)
+            buildSystemBusConnection()
         } catch (e: DBusException) {
             logger.e(e) { "couldn't connect to system bus" }
             _disconnected.complete(ConnectionFailureReason.FailedToConnect)

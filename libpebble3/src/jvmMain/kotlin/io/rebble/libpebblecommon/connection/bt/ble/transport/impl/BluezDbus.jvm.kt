@@ -5,7 +5,7 @@ import org.freedesktop.dbus.annotations.DBusInterfaceName
 import org.freedesktop.dbus.connections.impl.DBusConnection
 import org.freedesktop.dbus.connections.impl.DBusConnectionBuilder
 import org.freedesktop.dbus.interfaces.DBusInterface
-import org.freedesktop.dbus.types.UInt16
+import org.freedesktop.dbus.messages.MethodCall
 import org.freedesktop.dbus.types.Variant
 import java.io.File
 
@@ -30,12 +30,22 @@ private fun currentUnixUid(): Long? = try {
     null
 }
 
-internal fun buildSystemBusConnection(replyTimeoutMs: Int = 15_000): DBusConnection {
+// The real, global per-method-call reply-wait timeout - MethodCall.setDefaultTimeout(), not
+// TransportConfig.withTimeout() (which only affects connection setup, not method call replies;
+// confirmed empirically - a 60s TransportConfig value still produced a NoReply after ~20s, dbus-
+// java's own hardcoded default). This is a static/JVM-wide setting, so every caller here shares
+// one generous value rather than each passing its own (whichever call happens last would win and
+// silently override the others otherwise). 60s comfortably covers both Device1.Connect() (BlueZ
+// blocks until the link comes up or fails) and Device1.Pair() (BlueZ blocks until the watch's own
+// pairing prompt is actually answered by a human).
+private const val DBUS_REPLY_TIMEOUT_MS = 60_000L
+
+internal fun buildSystemBusConnection(): DBusConnection {
+    MethodCall.setDefaultTimeout(DBUS_REPLY_TIMEOUT_MS)
     val builder = DBusConnectionBuilder.forSystemBus()
     currentUnixUid()?.let { uid ->
         builder.transportConfig().configureSasl().withSaslUid(uid).back()
     }
-    builder.transportConfig().withTimeout(replyTimeoutMs)
     return builder.build()
 }
 
@@ -61,19 +71,39 @@ internal data class BluezDevice(
     val manufacturerData: Map<Int, ByteArray>,
 )
 
+// dbus-java decodes nested collection types buried inside a fully generic Variant<?> (as opposed
+// to a concretely-typed method return) more loosely than a real ByteArray/UInt16 - defensive
+// coercion here rather than a direct cast, which silently drops every entry if the runtime
+// representation isn't exactly what's expected (confirmed empirically: BlueZ had real, fresh
+// ManufacturerData for a live device and this was still returning an empty map).
+private fun Any?.asIntKey(): Int? = when (this) {
+    is Number -> toInt()
+    else -> null
+}
+
+private fun Any?.asByteArray(): ByteArray? = when (this) {
+    is ByteArray -> this
+    is Array<*> -> ByteArray(size) { i -> (this[i] as? Number)?.toByte() ?: return null }
+    is Collection<*> -> ByteArray(size) { i -> (elementAt(i) as? Number)?.toByte() ?: return null }
+    else -> null
+}
+
 internal fun Map<DBusPath, Map<String, Map<String, Variant<*>>>>.parseBluezDevices(): List<BluezDevice> =
     mapNotNull { (path, ifaces) ->
         val device1 = ifaces["org.bluez.Device1"] ?: return@mapNotNull null
-        @Suppress("UNCHECKED_CAST")
-        val manufacturerData = (device1["ManufacturerData"]?.value as? Map<UInt16, Variant<*>>)
-            ?.mapNotNull { (code, variant) -> (variant.value as? ByteArray)?.let { code.toInt() to it } }
+        val manufacturerData = (device1["ManufacturerData"]?.value as? Map<*, *>)
+            ?.mapNotNull { (code, variant) ->
+                val key = code.asIntKey() ?: return@mapNotNull null
+                val bytes = ((variant as? Variant<*>)?.value ?: variant).asByteArray() ?: return@mapNotNull null
+                key to bytes
+            }
             ?.toMap()
             ?: emptyMap()
         BluezDevice(
             path = path.path,
             address = device1["Address"]?.value as? String,
             name = device1["Name"]?.value as? String,
-            rssi = (device1["RSSI"]?.value as? Short)?.toInt(),
+            rssi = device1["RSSI"]?.value.asIntKey(),
             bonded = device1["Bonded"]?.value as? Boolean ?: false,
             manufacturerData = manufacturerData,
         )

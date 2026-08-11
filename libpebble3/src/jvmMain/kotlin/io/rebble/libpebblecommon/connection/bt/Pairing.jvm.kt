@@ -26,7 +26,9 @@ private val POLL_INTERVAL = 1.seconds
 
 // Reused across calls rather than opened per poll - SASL handshake overhead per connection is
 // real, and DbusConnectedGattClient already establishes the same "one connection, many calls"
-// pattern for the GATT side.
+// pattern for the GATT side. The reply-wait timeout generous enough for Device1.Pair() (BlueZ
+// blocks until the watch's own pairing prompt is answered by a human) is set globally in
+// buildSystemBusConnection() itself - see BluezDbus.jvm.kt.
 private val connection by lazy { buildSystemBusConnection() }
 
 private fun devicePath(identifier: PebbleBleIdentifier): String =
@@ -45,10 +47,21 @@ actual fun isBonded(identifier: PebbleBleIdentifier): Boolean = isPaired(deviceP
 actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
     logger.d("createBond()")
     return try {
-        connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java).Pair()
+        val device = connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java)
+        // Pair() blocks on its D-Bus reply until the human answers the watch's own pairing
+        // prompt - firing it on a background thread keeps createBond() itself non-blocking,
+        // matching every other platform (this only requests the bond; PebblePairing.kt already
+        // polls Paired separately with its own PENDING_BOND_TIMEOUT).
+        Thread({
+            try {
+                device.Pair()
+            } catch (e: Exception) {
+                logger.e(e) { "Pair() failed" }
+            }
+        }, "dbus-pair-${identifier.asString}").apply { isDaemon = true }.start()
         true
     } catch (e: Exception) {
-        logger.e(e) { "Pair() failed" }
+        logger.e(e) { "createBond() failed to start" }
         false
     }
 }
