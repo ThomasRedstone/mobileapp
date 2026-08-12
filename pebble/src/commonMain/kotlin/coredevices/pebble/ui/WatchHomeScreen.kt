@@ -311,7 +311,13 @@ fun WatchHomeScreen(
             when (platform) {
                 Platform.Android -> {
                     val offset = if (systemNavBarBottomHeight > 25.dp) 10.dp else 0.dp
-                    systemNavBarBottomHeight + 70.dp - offset
+                    // Tuned against real Android nav-bar insets, which are never zero - on a
+                    // target where WindowInsets.navigationBars resolves to 0.dp (Ubuntu Touch's
+                    // desktop-JVM build under Xwayland, which binds Platform.Android for shared
+                    // behaviour), this formula bottoms out at 70.dp, below Material3's own
+                    // NavigationBar default height (80.dp) and clips the item labels. Floor it at
+                    // that default instead of a value only real hardware happens to clear.
+                    (systemNavBarBottomHeight + 70.dp - offset).coerceAtLeast(80.dp)
                 }
 
                 Platform.IOS -> 90.dp
