@@ -287,6 +287,12 @@ compose.desktop {
         nativeDistributions {
             packageName = "coreapp"
 
+            // jpackage falls back to its own default (Compose Multiplatform's Kotlin-logo
+            // icon) if this isn't set - use the real Pebble app icon instead.
+            linux {
+                iconFile.set(project.file("../util/src/androidMain/ic_launcher-playstore.png"))
+            }
+
             // dbus-java's SASL handshake always calls getUserId() to compute an OptionalLong
             // fallback (Java evaluates orElse()'s argument eagerly, even when the configured
             // saslUid makes the fallback unused) - jdeps' static analysis of the jars misses

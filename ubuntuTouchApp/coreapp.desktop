@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=CoreApp
+Name=Pebble
 Comment=Pebble/Core watch companion
 Exec=coreapp-launch.sh
 Icon=coreapp/lib/coreapp.png

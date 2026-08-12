@@ -1,6 +1,6 @@
 {
     "architecture": "arm64",
-    "description": "CoreApp - Pebble/Core watch companion",
+    "description": "Pebble/Core watch companion",
     "framework": "ubuntu-touch-24.04-1.x",
     "hooks": {
         "coreapp": {
@@ -10,6 +10,6 @@
     },
     "maintainer": "Tom Redstone <redders@gmail.com>",
     "name": "coreapp.tomredstone",
-    "title": "CoreApp",
-    "version": "0.1.19"
+    "title": "Pebble",
+    "version": "0.1.32"
 }
