@@ -9,6 +9,7 @@ import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import co.touchlab.kermit.Logger
 import coredevices.ExperimentalDevicesFacade
 import coredevices.NoOpExperimentalDevicesFacade
 import coredevices.coreapp.di.apiModule
@@ -19,11 +20,34 @@ import coredevices.coreapp.ui.App
 import coredevices.coreapp.util.initLogging
 import coredevices.pebble.PebbleAppDelegate
 import coredevices.pebble.watchModule
+import coredevices.util.AppDirs
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
+import java.io.RandomAccessFile
 
-@OptIn(ExperimentalComposeUiApi::class)
-fun main() {
+// Held for the process lifetime so the underlying FileLock isn't released early by GC.
+private var singleInstanceLockChannel: java.nio.channels.FileChannel? = null
+
+// Ubuntu Touch's SIGSTOP-on-background lifecycle (see docs/ubuntu-touch-architectural-paths.md)
+// leaves old instances running indefinitely rather than exiting cleanly - a stale instance then
+// races a freshly launched one for the same BLE connection, corrupting both (observed live:
+// PPoG desync, "Unknown watch" in the UI). A lock file, not just "kill old processes before
+// deploying", covers the case a user relaunches from the launcher without redeploying too.
+private fun exitIfAnotherInstanceIsRunning() {
+    val lockFile = AppDirs.cacheDir().apply { mkdirs() }.resolve("single-instance.lock")
+    val channel = RandomAccessFile(lockFile, "rw").channel
+    if (channel.tryLock() == null) {
+        System.err.println("Another coreapp instance already holds $lockFile - exiting.")
+        kotlin.system.exitProcess(1)
+    }
+    singleInstanceLockChannel = channel
+}
+
+// Backend bring-up, shared by both the normal UI launch and headless mode below - nothing here
+// is Compose/AWT-specific; PebbleAppDelegate and everything under it is plain commonMain.
+internal fun initCoreapp() {
+    exitIfAnotherInstanceIsRunning()
+
     // $TMPDIR (see coreapp-launch.sh, docs/ubuntu-touch-poc-plan.md Phase 6) isn't created by
     // anything else, and Room's bundled SQLite driver needs it to already exist.
     System.getenv("TMPDIR")?.takeIf { it.isNotBlank() }?.let { java.io.File(it).mkdirs() }
@@ -45,6 +69,23 @@ fun main() {
     // Android's MainApplication.onCreate() is the only other place this gets called - nothing
     // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
     koinApp.koin.get<PebbleAppDelegate>().init()
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+fun main() {
+    initCoreapp()
+
+    // TEMPORARY validation spike for docs/ubuntu-touch-poc-plan.md Phase 1's core-service split
+    // (see also docs/ubuntu-touch-architectural-paths.md) - same already-installed/AppArmor-
+    // permitted binary and entry point, gated by an env var rather than a separate main class,
+    // so it doesn't need its own exec grant. Proves the backend holds a connection with zero
+    // Compose/AWT/Xwayland involvement before committing to a real systemd --user daemon + IPC
+    // bridge. Not wired into coreapp-launch.sh - remove once diagnosed.
+    if (System.getenv("COREAPP_HEADLESS") == "1") {
+        Logger.withTag("Main").i { "COREAPP_HEADLESS=1: backend initialized, no UI - blocking forever" }
+        java.util.concurrent.CountDownLatch(1).await()
+        return
+    }
 
     application {
         // WindowPlacement.Maximized resizes the outer AWT frame under this Xwayland/Mir XWM
