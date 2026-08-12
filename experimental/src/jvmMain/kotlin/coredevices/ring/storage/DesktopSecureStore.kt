@@ -1,6 +1,7 @@
 package coredevices.ring.storage
 
 import co.touchlab.kermit.Logger
+import coredevices.util.AppDirs
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
@@ -18,7 +19,9 @@ import javax.crypto.spec.SecretKeySpec
  */
 internal class DesktopSecureStore(fileName: String) {
     private val logger = Logger.withTag("DesktopSecureStore")
-    private val dir = File(System.getProperty("user.home"), DATA_DIR)
+    // Was hardcoded to ~/.local/share/coreapp, outside the Click's writable dirs under real
+    // confinement (and ignoring $COREAPP_DIR_NAME) - see AppDirs' own doc comment.
+    private val dir = AppDirs.dataDir()
     private val storeFile = File(dir, fileName)
     private val keyFile = File(dir, MASTER_KEY_FILE)
     private val lock = Any()
@@ -106,7 +109,6 @@ internal class DesktopSecureStore(fileName: String) {
     }
 
     companion object {
-        private const val DATA_DIR = ".local/share/coreapp"
         private const val MASTER_KEY_FILE = "secure-store.key"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_LENGTH = 128

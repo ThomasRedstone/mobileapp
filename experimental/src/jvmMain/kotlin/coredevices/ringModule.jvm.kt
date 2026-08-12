@@ -13,6 +13,7 @@ import coredevices.ring.service.PlatformIndexNotificationManager
 import coredevices.ring.ui.screens.settings.SettingsBeeperContactsDialogViewModel
 import coredevices.ring.util.AudioPlayer
 import coredevices.ring.util.AudioRecorder
+import coredevices.util.AppDirs
 import coredevices.util.integrations.IntegrationTokenStorage
 import coredevices.util.transcription.CactusModelPathProvider
 import org.koin.core.module.dsl.factoryOf
@@ -20,7 +21,6 @@ import org.koin.core.module.dsl.singleOf
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
-import java.io.File
 
 // Ring/watch BLE satellite pairing (KMPHaversineSatelliteManager, used on Android/iOS) has no
 // desktop equivalent wired up here — Ring device connectivity on this platform is handled
@@ -31,7 +31,9 @@ actual val platformRingModule = module {
     factoryOf(::AudioRecorder)
     factoryOf(::AudioPlayer)
     factory {
-        val dbFile = File(File(System.getProperty("user.home"), ".local/share/coreapp"), "coreapp_room.db")
+        // Was hardcoded to ~/.local/share/coreapp, outside the Click's writable dirs under
+        // real confinement (and ignoring $COREAPP_DIR_NAME) - see AppDirs' own doc comment.
+        val dbFile = AppDirs.dataDir("coreapp_room.db")
         dbFile.parentFile?.mkdirs()
         Room.databaseBuilder<RingDatabase>(name = dbFile.absolutePath)
     } bind RoomDatabase.Builder::class
