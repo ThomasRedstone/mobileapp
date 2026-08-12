@@ -45,6 +45,8 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -154,6 +156,21 @@ fun WatchOnboardingScreen(
                 Column(
                     modifier = Modifier.fillMaxSize()
                         .verticalScrollbar(scrollState)
+                        // TEMPORARY diagnostic for the Ubuntu Touch touch-scroll bug - logs raw
+                        // pointer events (not consumed) to see whether swipe motion data reaches
+                        // Compose at all under Xwayland/AWT. Remove once diagnosed.
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    event.changes.forEach { change ->
+                                        logger.d {
+                                            "scrollDiag: type=${event.type} pos=${change.position} pressed=${change.pressed} id=${change.id}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         .padding(20.dp)
                         .verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally,
