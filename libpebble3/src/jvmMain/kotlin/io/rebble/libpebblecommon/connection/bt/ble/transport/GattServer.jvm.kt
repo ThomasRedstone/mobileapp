@@ -93,6 +93,7 @@ internal class ExportedCharacteristic(
     initialValue: ByteArray = ByteArray(0),
 ) : GattCharacteristic1Server, Properties {
     @Volatile var value: ByteArray = initialValue
+    @Volatile var notifying: Boolean = false
     var onReadRequested: (device: String) -> Unit = {}
     var onWrite: (device: String, value: ByteArray) -> Unit = { _, _ -> }
 
@@ -116,10 +117,12 @@ internal class ExportedCharacteristic(
     // are addressed by writing directly to whichever device registerDevice() registered, not by
     // tracking subscribers here.
     override fun StartNotify() {
+        notifying = true
         logger.d { "notify subscribed: $uuid" }
     }
 
     override fun StopNotify() {
+        notifying = false
         logger.d { "notify unsubscribed: $uuid" }
     }
 
@@ -308,11 +311,9 @@ actual class GattServer(
             logger.e { "sendData: unknown characteristic: $characteristicUuid" }
             return SendResult.Failed
         }
-        // Best-effort: unlike Android's notifyCharacteristicChanged, BlueZ's
-        // PropertiesChanged-based notify has no per-send completion callback
-        // reaching us here, so this can't distinguish "sent" from "actually
-        // delivered" the way the Android GattServer's writing/timeout tracking
-        // does.
+        if (!char.notifying) {
+            logger.w { "sendData: char=${char.uuid} has no active StartNotify subscription - BlueZ will likely drop this notify silently" }
+        }
         return try {
             char.value = data
             conn.sendMessage(
