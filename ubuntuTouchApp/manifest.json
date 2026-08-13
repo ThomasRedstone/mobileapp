@@ -8,7 +8,7 @@
             "desktop": "coreapp.desktop"
         }
     },
-    "maintainer": "Tom Redstone <redders@gmail.com>",
+    "maintainer": "Thomas Redstone <redders@gmail.com>",
     "name": "coreapp.tomredstone",
     "title": "Pebble",
     "version": "0.1.34"
