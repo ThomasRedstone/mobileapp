@@ -307,7 +307,7 @@ compose.desktop {
             // isn't writable under Click confinement (docs/ubuntu-touch-poc-plan.md, Phase 6).
             // Ubuntu Touch is single-user with a fixed $HOME, so a literal path is fine here -
             // matches the same assumption already made throughout this codebase's desktop paths.
-            jvmArgs += "-Djava.io.tmpdir=/home/phablet/.cache/coreapp.tomredstone/tmp"
+            jvmArgs += "-Djava.io.tmpdir=/home/phablet/.cache/coreapp.thomasredstone/tmp"
         }
     }
 }
