@@ -1,6 +1,7 @@
 package io.rebble.libpebblecommon.di
 
 import android.app.Application
+import com.russhwolf.settings.Settings
 import io.rebble.libpebblecommon.calendar.AndroidCalendarActionHandler
 import io.rebble.libpebblecommon.calendar.AndroidSystemCalendar
 import io.rebble.libpebblecommon.calendar.PlatformCalendarActionHandler
@@ -50,6 +51,8 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 
 actual fun Scope.createBleGattConnector(): GattConnector = get<KableGattConnector>()
+
+actual fun createLibPebbleSettings(): Settings = Settings()
 
 actual val platformModule: Module = module {
     single {

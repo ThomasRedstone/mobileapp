@@ -3,6 +3,7 @@ package coredevices.coreapp.di
 import CoreAppVersion
 import PlatformContext
 import PlatformShareLauncher
+import com.russhwolf.settings.Settings
 import coredevices.coreapp.auth.RealAppleAuthUtil
 import coredevices.coreapp.auth.RealGithubAuthUtil
 import coredevices.coreapp.auth.RealGoogleAuthUtil
@@ -40,6 +41,7 @@ import kotlin.time.Duration
 import kotlin.time.DurationUnit
 
 val iosDefaultModule = module {
+    single { Settings() }
     singleOf(::RealGoogleAuthUtil) bind GoogleAuthUtil::class
     single<SilentSignIn> { NoOpSilentSignIn }
     singleOf(::RealAppleAuthUtil) bind AppleAuthUtil::class

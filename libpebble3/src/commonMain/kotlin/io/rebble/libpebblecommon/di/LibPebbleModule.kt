@@ -291,6 +291,14 @@ expect val platformModule: Module
  */
 expect fun Scope.createBleGattConnector(): GattConnector
 
+/**
+ * The default JVM `Settings()` no-arg factory backs onto `java.util.prefs.Preferences.userRoot()`,
+ * whose store lives under `$HOME/.java/.userPrefs/` - outside an Ubuntu Touch Click's writable
+ * dirs, causing a background SecurityException loop under confinement. Android/iOS use their own
+ * real platform-backed `Settings()` and are unaffected.
+ */
+expect fun createLibPebbleSettings(): Settings
+
 val CommonPhoneCapabilities = setOf(
     ProtocolCapsFlag.SupportsAppRunStateProtocol,
     ProtocolCapsFlag.SupportsInfiniteLogDump,
@@ -339,7 +347,7 @@ fun initKoin(
                 single { BleConfigFlow(get<LibPebbleConfigHolder>().config) }
                 single { NotificationConfigFlow(get<LibPebbleConfigHolder>().config) }
 
-                single { Settings() }
+                single { createLibPebbleSettings() }
                 single { appContext }
                 single { webServices }
                 single { tokenProvider }

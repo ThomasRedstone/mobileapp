@@ -5,6 +5,7 @@ import PlatformContext
 import PlatformShareLauncher
 import android.content.Context
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.russhwolf.settings.Settings
 import coredevices.analytics.createAndroidAnalytics
 import coredevices.coreapp.PebbleBackgroundManager
 import coredevices.coreapp.appVersionName
@@ -42,6 +43,7 @@ import kotlin.time.Duration
 import kotlin.time.toJavaDuration
 
 val androidDefaultModule = module {
+    single { Settings() }
     singleOf(::RealGoogleAuthUtil) binds arrayOf(GoogleAuthUtil::class, SilentSignIn::class)
     singleOf(::RealAppleAuthUtil) bind AppleAuthUtil::class
     singleOf(::RealGithubAuthUtil) bind GitHubAuthUtil::class

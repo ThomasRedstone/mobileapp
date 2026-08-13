@@ -1,5 +1,7 @@
 package io.rebble.libpebblecommon.di
 
+import com.russhwolf.settings.PropertiesSettings
+import com.russhwolf.settings.Settings
 import io.rebble.libpebblecommon.calendar.PlatformCalendarActionHandler
 import io.rebble.libpebblecommon.calendar.SystemCalendar
 import io.rebble.libpebblecommon.calls.LegacyPhoneReceiver
@@ -25,6 +27,8 @@ import org.koin.core.module.dsl.singleOf
 import org.koin.core.scope.Scope
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import java.io.File
+import java.util.Properties
 
 /**
  * Talks to BlueZ directly over D-Bus (DbusGattClient.jvm.kt) rather than through Kable: its
@@ -38,6 +42,24 @@ actual fun Scope.createBleGattConnector(): GattConnector = DbusGattConnector(
     scope = get(),
     blePlatformConfig = get(),
 )
+
+// Settings()'s JVM no-arg factory is PreferencesSettings(Preferences.userRoot()), whose backing
+// store resolves under $HOME/.java/.userPrefs/ - outside the Click's writable dirs under real
+// confinement, same bug class as JSLocalStorageInterface.jvm.kt (:libpebble3 deliberately avoids
+// depending on :util's AppDirs, being mirrored from a standalone repo, hence $TMPDIR here too).
+actual fun createLibPebbleSettings(): Settings {
+    val tmpDir = System.getenv("TMPDIR")?.takeIf { it.isNotBlank() }
+        ?: System.getProperty("java.io.tmpdir")
+    val file = File(tmpDir, "libpebble-settings.properties")
+    val properties = Properties()
+    if (file.exists()) {
+        file.inputStream().use { properties.load(it) }
+    }
+    return PropertiesSettings(properties) { toSave ->
+        file.parentFile?.mkdirs()
+        file.outputStream().use { toSave.store(it, null) }
+    }
+}
 
 /**
  * Minimal platformModule for Linux/Ubuntu Touch: only the BLE connection

@@ -1,5 +1,6 @@
 package io.rebble.libpebblecommon.di
 
+import com.russhwolf.settings.Settings
 import io.rebble.libpebblecommon.calendar.IosCalendarActionHandler
 import io.rebble.libpebblecommon.calendar.IosSystemCalendar
 import io.rebble.libpebblecommon.calendar.PlatformCalendarActionHandler
@@ -39,6 +40,8 @@ import org.koin.dsl.module
 import kotlin.time.Duration.Companion.seconds
 
 actual fun Scope.createBleGattConnector(): GattConnector = get<KableGattConnector>()
+
+actual fun createLibPebbleSettings(): Settings = Settings()
 
 actual val platformModule: Module = module {
     single {

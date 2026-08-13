@@ -3,10 +3,13 @@ package coredevices.coreapp.di
 import CoreAppVersion
 import PlatformContext
 import PlatformShareLauncher
+import com.russhwolf.settings.PropertiesSettings
+import com.russhwolf.settings.Settings
 import coredevices.analytics.AnalyticsBackend
 import coredevices.coreapp.auth.RealAppleAuthUtil
 import coredevices.coreapp.auth.RealGithubAuthUtil
 import coredevices.coreapp.auth.RealGoogleAuthUtil
+import coredevices.util.AppDirs
 import coredevices.util.CommonBuildKonfig
 import coredevices.util.CompanionDevice
 import coredevices.util.PermissionRequester
@@ -32,10 +35,25 @@ import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.binds
 import org.koin.dsl.module
+import java.util.Properties
 import kotlin.time.Duration
 import kotlin.time.toJavaDuration
 
 val desktopModule = module {
+    // Settings()'s JVM no-arg factory is PreferencesSettings(Preferences.userRoot()), whose
+    // backing store resolves under $HOME/.java/.userPrefs/ - outside the Click's writable dirs
+    // under real confinement, same bug class as CoreAnalytics.jvm.kt.
+    single<Settings> {
+        val file = AppDirs.dataDir("app-settings.properties")
+        val properties = Properties()
+        if (file.exists()) {
+            file.inputStream().use { properties.load(it) }
+        }
+        PropertiesSettings(properties) { toSave ->
+            file.parentFile.mkdirs()
+            file.outputStream().use { toSave.store(it, null) }
+        }
+    }
     singleOf(::RealGoogleAuthUtil) binds arrayOf(GoogleAuthUtil::class, SilentSignIn::class)
     singleOf(::RealAppleAuthUtil) bind AppleAuthUtil::class
     singleOf(::RealGithubAuthUtil) bind GitHubAuthUtil::class

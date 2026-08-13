@@ -2,7 +2,6 @@ package coredevices.coreapp.di
 
 import AppUpdateTracker
 import NextBugReportContext
-import com.russhwolf.settings.Settings
 import coredevices.CoreBackgroundSync
 import coredevices.EnableExperimentalDevices
 import coredevices.analytics.CoreAnalytics
@@ -65,7 +64,6 @@ val utilModule = module {
     singleOf(::PushMessaging)
     singleOf(::CoreDeepLinkHandler)
     singleOf(::RealThemeProvider) bind ThemeProvider::class
-    single { Settings() }
     viewModelOf(::OnboardingViewModel)
     singleOf(::EnableExperimentalDevices)
     singleOf(::AppResumed)
