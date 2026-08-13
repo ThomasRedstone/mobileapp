@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -148,6 +149,7 @@ fun WatchOnboardingScreen(
     }
 
     val scrollState = rememberScrollState()
+    val touchSlop = LocalViewConfiguration.current.touchSlop
     MaterialTheme(colorScheme = onboardingScheme) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -156,18 +158,36 @@ fun WatchOnboardingScreen(
                 Column(
                     modifier = Modifier.fillMaxSize()
                         .verticalScrollbar(scrollState)
-                        // TEMPORARY diagnostic for the Ubuntu Touch touch-scroll bug - logs raw
-                        // pointer events (not consumed) to see whether swipe motion data reaches
-                        // Compose at all under Xwayland/AWT. Remove once diagnosed.
+                        // verticalScroll's built-in drag-gesture detector never fires for touch
+                        // input under this Xwayland/AWT setup (confirmed via raw pointer logging -
+                        // real press/move/release deltas reach Compose, but no scroll results), so
+                        // drive the scroll state directly from the raw pointer stream instead.
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
+                                var dragStartY: Float? = null
+                                var dragging = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    event.changes.forEach { change ->
-                                        logger.d {
-                                            "scrollDiag: type=${event.type} pos=${change.position} pressed=${change.pressed} id=${change.id}"
-                                        }
+                                    val change = event.changes.firstOrNull() ?: continue
+                                    if (!change.pressed) {
+                                        dragStartY = null
+                                        dragging = false
+                                        continue
                                     }
+                                    val startY = dragStartY
+                                    if (startY == null) {
+                                        dragStartY = change.position.y
+                                        continue
+                                    }
+                                    if (!dragging) {
+                                        if (kotlin.math.abs(change.position.y - startY) < touchSlop) {
+                                            continue
+                                        }
+                                        dragging = true
+                                    }
+                                    val deltaY = change.position.y - change.previousPosition.y
+                                    scrollState.dispatchRawDelta(-deltaY)
+                                    change.consume()
                                 }
                             }
                         }
