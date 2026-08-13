@@ -477,14 +477,18 @@ fun OnboardingAppCarousel(
                                     )
                                     logger.v { "Add to locker from watch onboarding ${commonAppStore.storeApp?.title} result=$addResult" }
                                     if (!addResult) {
+                                        added = false
                                         snackbarDisplay.showSnackbar("Failed to add app")
                                         return@launch
                                     }
-                                    libPebble.launchApp(
+                                    val launched = libPebble.launchApp(
                                         entry = entry,
-                                        snackbarDisplay = NoOpSnackbarDisplay,
+                                        snackbarDisplay = snackbarDisplay,
                                         connectedIdentifier = watch.identifier,
                                     )
+                                    if (!launched) {
+                                        added = false
+                                    }
                                 }
                             },
                             primaryColor = true,
@@ -502,10 +506,6 @@ fun OnboardingAppCarousel(
         Text(footerText, textAlign = TextAlign.Center)
     }
     SectionDivider()
-}
-
-object NoOpSnackbarDisplay : SnackbarDisplay {
-    override fun showSnackbar(message: String) {}
 }
 
 

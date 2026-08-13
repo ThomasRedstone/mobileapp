@@ -499,15 +499,22 @@ fun LockerAppScreen(topBarParams: TopBarParams, uuid: Uuid?, navBarNav: NavBarNa
                                             entry.commonAppType.storeSource
                                         )
                                         if (!addResult) {
+                                            viewModel.addedToLocker = false
                                             topBarParams.showSnackbar("Failed to add app")
                                             return@launch
                                         }
                                         if (watch != null) {
-                                            libPebble.launchApp(
+                                            val launched = libPebble.launchApp(
                                                 entry = entry,
                                                 snackbarDisplay = topBarParams,
                                                 connectedIdentifier = watch.identifier,
                                             )
+                                            // launchApp already reported the specific failure via its own
+                                            // snackbar - just undo the optimistic "added" state so the
+                                            // button comes back and the user can retry.
+                                            if (!launched) {
+                                                viewModel.addedToLocker = false
+                                            }
                                         }
                                     }
                                 },
