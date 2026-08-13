@@ -22,7 +22,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import coredevices.ui.verticalScrollFixed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Launch
@@ -271,7 +271,7 @@ fun LockerAppScreen(topBarParams: TopBarParams, uuid: Uuid?, navBarNav: NavBarNa
             onRefresh = { reloadFromStore(useCache = false) },
         ) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 5.dp)
+                modifier = Modifier.verticalScrollFixed(rememberScrollState()).padding(horizontal = 5.dp)
             ) {
                 entry?.let { entry ->
                     if (commonAppStore?.headerImageUrl != null) {

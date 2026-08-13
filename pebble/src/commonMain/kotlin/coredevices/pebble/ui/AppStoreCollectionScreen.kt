@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import coredevices.ui.verticalDragFix
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -147,9 +150,11 @@ fun AppStoreCollectionScreen(
             } else {
                 when (appType) {
                     AppType.Watchface, null -> {
+                        val gridState = rememberLazyGridState()
                         LazyVerticalGrid(
+                            state = gridState,
                             columns = GridCells.FixedSize(120.dp),
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().verticalDragFix(gridState),
                             contentPadding = PaddingValues(4.dp),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                         ) {
@@ -169,8 +174,10 @@ fun AppStoreCollectionScreen(
                         }
                     }
                     AppType.Watchapp -> {
+                        val listState = rememberLazyListState()
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().verticalDragFix(listState),
                             contentPadding = PaddingValues(4.dp),
                         ) {
                             items(

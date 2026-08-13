@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
@@ -39,6 +40,7 @@ import coredevices.database.AppstoreSourceDao
 import coredevices.pebble.account.PebbleAccount
 import coredevices.pebble.services.PebbleWebServices
 import coredevices.ui.M3Dialog
+import coredevices.ui.verticalDragFix
 import io.ktor.http.URLProtocol
 import io.ktor.http.parseUrl
 import io.rebble.libpebblecommon.locker.AppType
@@ -180,7 +182,11 @@ fun AppstoreSettingsScreen(
                 }
             )
         }
-        LazyColumn(Modifier.padding(insets)) {
+        val lazyListState = rememberLazyListState()
+        LazyColumn(
+            state = lazyListState,
+            modifier = Modifier.padding(insets).verticalDragFix(lazyListState),
+        ) {
             items(sources.size, { sources[it].id }) { i ->
                 val source = sources[i]
                 val collections = collections?.get(source)

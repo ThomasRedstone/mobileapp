@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import co.touchlab.kermit.Logger
+import coredevices.ui.verticalDragFix
 import coredevices.util.CoreConfigHolder
 import coredevices.util.PermissionRequester
 import coredevices.util.PermissionResult
@@ -60,7 +62,8 @@ fun PermissionsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
             return
         }
 
-        LazyColumn {
+        val lazyListState = rememberLazyListState()
+        LazyColumn(state = lazyListState, modifier = Modifier.verticalDragFix(lazyListState)) {
             item(key = "hide_badges_toggle") {
                 ListItem(
                     headlineContent = { Text("Hide missing permission warnings") },

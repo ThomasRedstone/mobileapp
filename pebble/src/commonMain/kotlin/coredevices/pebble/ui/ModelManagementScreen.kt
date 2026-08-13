@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
@@ -50,6 +51,7 @@ import androidx.lifecycle.viewModelScope
 import co.touchlab.kermit.Logger
 import com.russhwolf.settings.Settings
 import coredevices.ui.M3Dialog
+import coredevices.ui.verticalDragFix
 import coredevices.util.CoreConfigHolder
 import coredevices.util.models.CactusSTTMode
 import coredevices.util.models.ModelDownloadStatus
@@ -289,10 +291,13 @@ fun ModelManagementScreen(
     }
     Box(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
         Scaffold { paddingValues ->
+            val lazyListState = rememberLazyListState()
             LazyColumn(
+                state = lazyListState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 16.dp),
+                    .padding(top = 16.dp)
+                    .verticalDragFix(lazyListState),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {

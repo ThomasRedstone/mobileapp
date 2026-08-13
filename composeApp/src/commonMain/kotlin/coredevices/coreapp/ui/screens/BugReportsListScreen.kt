@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import coredevices.coreapp.api.AtlasTicketDetails
 import coredevices.coreapp.api.BugReports
 import coredevices.ui.SignInButtons
+import coredevices.ui.verticalDragFix
 import coredevices.util.emailOrNull
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.auth
@@ -167,8 +169,10 @@ fun BugReportsListScreen(
 
                     else -> {
                         // Show list of tickets using ListItem style
+                        val lazyListState = rememberLazyListState()
                         LazyColumn(
-                            modifier = Modifier.fillMaxSize()
+                            state = lazyListState,
+                            modifier = Modifier.fillMaxSize().verticalDragFix(lazyListState)
                         ) {
                             val userEmail = user
                             if (userEmail == null) {

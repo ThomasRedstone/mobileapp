@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
@@ -36,6 +37,7 @@ import coredevices.util.PermissionRequester
 import coredevices.util.Platform
 import coredevices.util.granted
 import coredevices.util.isAndroid
+import coredevices.ui.verticalDragFix
 import coredevices.util.rememberUiContext
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -62,7 +64,11 @@ fun CalendarScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
             return
         }
         Scaffold { innerPadding ->
-            LazyColumn(modifier = Modifier.padding(8.dp)) {
+            val lazyListState = rememberLazyListState()
+            LazyColumn(
+                state = lazyListState,
+                modifier = Modifier.padding(8.dp).verticalDragFix(lazyListState),
+            ) {
                 if (!calendarPermissionGrantedSafe) {
                     item {
                         ElevatedCard(

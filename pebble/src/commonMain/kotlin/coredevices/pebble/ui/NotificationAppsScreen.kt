@@ -45,6 +45,7 @@ import coredevices.pebble.PebbleFeatures
 import coredevices.pebble.Platform
 import coredevices.pebble.rememberLibPebble
 import coredevices.ui.PebbleElevatedButton
+import coredevices.ui.verticalDragFix
 import io.rebble.libpebblecommon.connection.NotificationApps
 import io.rebble.libpebblecommon.database.entity.MuteState
 import io.rebble.libpebblecommon.database.entity.everNotified
@@ -317,7 +318,7 @@ fun NotificationAppsScreen(topBarParams: TopBarParams, nav: NavBarNav, gotoDefau
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            LazyColumn(state = listState) {
+            LazyColumn(state = listState, modifier = Modifier.verticalDragFix(listState)) {
                 item(key = "toggle_all") {
                     ListItem(
                         headlineContent = {

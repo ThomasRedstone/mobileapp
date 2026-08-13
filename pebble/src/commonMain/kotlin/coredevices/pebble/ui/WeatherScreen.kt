@@ -49,6 +49,7 @@ import coredevices.pebble.weather.WeatherFetcher
 import coredevices.pebble.weather.createWeatherAutocomplete
 import coredevices.pebble.weather.usefulName
 import coredevices.ui.M3Dialog
+import coredevices.ui.verticalDragFix
 import dev.jordond.compass.Place
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
@@ -149,6 +150,7 @@ fun WeatherScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
         ) {
             LazyColumn(
                 state = lazyListState,
+                modifier = Modifier.verticalDragFix(lazyListState),
             ) {
                 items(mutableLocations, key = { it.key }) { location ->
                     ReorderableItem(reorderableLazyListState, key = location.key) { isDragging ->

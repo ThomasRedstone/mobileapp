@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import coredevices.ui.verticalScrollFixed
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -45,7 +45,7 @@ internal fun WelcomeStep(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+                .verticalScrollFixed(rememberScrollState()),
         ) {
             // Hero — ring on soft tonal backdrop. The PNG has a white background;
             // we fill the canvas with the pink container color first, then draw the

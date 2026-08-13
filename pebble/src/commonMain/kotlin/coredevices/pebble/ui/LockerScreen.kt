@@ -94,6 +94,7 @@ import coredevices.pebble.services.PebbleWebServices
 import coredevices.pebble.services.SearchPagingSource
 import coredevices.pebble.services.StoreCategory
 import coredevices.ui.PebbleElevatedButton
+import coredevices.ui.verticalDragFix
 import io.rebble.libpebblecommon.connection.AppContext
 import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import io.rebble.libpebblecommon.connection.LibPebble
@@ -426,7 +427,7 @@ fun LockerScreen(
                         }
 
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().verticalDragFix(viewModel.mainListState),
                             state = viewModel.mainListState,
                         ) {
                             @Composable
@@ -716,7 +717,7 @@ fun SearchResultsList(
             LazyVerticalGrid(
                 columns = GridCells.FixedSize(120.dp),
                 state = lazyGridState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().verticalDragFix(lazyGridState),
                 contentPadding = PaddingValues(4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
@@ -771,7 +772,7 @@ fun SearchResultsList(
             }
         }
     } else {
-        LazyColumn(modifier, lazyListState) {
+        LazyColumn(modifier.verticalDragFix(lazyListState), lazyListState) {
             if (lockerEntries.isNotEmpty()) {
                 item {
                     Text(

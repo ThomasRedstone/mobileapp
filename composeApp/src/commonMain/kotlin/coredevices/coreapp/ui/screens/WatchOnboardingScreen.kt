@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.RemoveCircle
@@ -45,9 +44,6 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -87,6 +83,7 @@ import coredevices.pebble.ui.launchApp
 import coredevices.pebble.ui.rememberSettingsItemsState
 import coredevices.ui.CoreLinearProgressIndicator
 import coredevices.ui.PebbleElevatedButton
+import coredevices.ui.verticalScrollFixed
 import io.rebble.libpebblecommon.connection.ConnectedPebbleDevice
 import io.rebble.libpebblecommon.connection.ConnectedPebbleDeviceInRecovery
 import io.rebble.libpebblecommon.connection.FirmwareUpdateCheckResult
@@ -149,7 +146,6 @@ fun WatchOnboardingScreen(
     }
 
     val scrollState = rememberScrollState()
-    val touchSlop = LocalViewConfiguration.current.touchSlop
     MaterialTheme(colorScheme = onboardingScheme) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -158,41 +154,8 @@ fun WatchOnboardingScreen(
                 Column(
                     modifier = Modifier.fillMaxSize()
                         .verticalScrollbar(scrollState)
-                        // verticalScroll's built-in drag-gesture detector never fires for touch
-                        // input under this Xwayland/AWT setup (confirmed via raw pointer logging -
-                        // real press/move/release deltas reach Compose, but no scroll results), so
-                        // drive the scroll state directly from the raw pointer stream instead.
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                var dragStartY: Float? = null
-                                var dragging = false
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    val change = event.changes.firstOrNull() ?: continue
-                                    if (!change.pressed) {
-                                        dragStartY = null
-                                        dragging = false
-                                        continue
-                                    }
-                                    val startY = dragStartY
-                                    if (startY == null) {
-                                        dragStartY = change.position.y
-                                        continue
-                                    }
-                                    if (!dragging) {
-                                        if (kotlin.math.abs(change.position.y - startY) < touchSlop) {
-                                            continue
-                                        }
-                                        dragging = true
-                                    }
-                                    val deltaY = change.position.y - change.previousPosition.y
-                                    scrollState.dispatchRawDelta(-deltaY)
-                                    change.consume()
-                                }
-                            }
-                        }
                         .padding(20.dp)
-                        .verticalScroll(scrollState),
+                        .verticalScrollFixed(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(

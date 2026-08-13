@@ -18,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import coredevices.ui.verticalDragFix
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -147,7 +148,8 @@ fun CannedRepliesScreen(nav: NavBarNav, topBarParams: TopBarParams) {
             state = lazyListState,
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp)
+                .verticalDragFix(lazyListState),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item(key = "header") {

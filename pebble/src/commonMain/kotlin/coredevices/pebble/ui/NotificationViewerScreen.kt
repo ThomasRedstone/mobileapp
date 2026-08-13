@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coredevices.pebble.Platform
 import coredevices.pebble.rememberLibPebble
+import coredevices.ui.verticalDragFix
 import io.rebble.libpebblecommon.connection.NotificationApps
 import io.rebble.libpebblecommon.notification.NotificationDecision
 import kotlinx.coroutines.flow.map
@@ -112,7 +114,8 @@ fun NotificationHistoryList(
     val notificationApi: NotificationApps = koinInject()
     val platform = koinInject<Platform>()
 
-    LazyColumn {
+    val lazyListState = rememberLazyListState()
+    LazyColumn(state = lazyListState, modifier = Modifier.verticalDragFix(lazyListState)) {
         items(notifications, key = { it.id }) { notification ->
             val appWrapperFlow = remember(packageName) {
                 notificationApi.notificationApps()

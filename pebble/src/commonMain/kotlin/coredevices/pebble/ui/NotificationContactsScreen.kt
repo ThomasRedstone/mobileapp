@@ -48,6 +48,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import coredevices.pebble.rememberLibPebble
 import coredevices.ui.ShowOnceTooltipBox
+import coredevices.ui.verticalDragFix
 import io.rebble.libpebblecommon.database.dao.ContactWithCount
 import io.rebble.libpebblecommon.database.entity.MuteState
 import kotlinx.coroutines.launch
@@ -129,7 +130,7 @@ fun NotificationContactsScreen(topBarParams: TopBarParams, nav: NavBarNav, gotoD
                 }
             }
 
-            LazyColumn(state = listState) {
+            LazyColumn(state = listState, modifier = Modifier.verticalDragFix(listState)) {
                 items(
                     count = contacts.itemCount,
                     key = contacts.itemKey { it.contact.lookupKey }

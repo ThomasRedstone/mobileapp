@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import coredevices.ui.verticalScrollFixed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -67,7 +67,7 @@ fun HealthScreen(topBarParams: TopBarParams, nav: NavBarNav) {
         TimeRangeSelector(vm.selectedTimeRange, vm::onTimeRangeChanged)
         DateNavigator(dl, vm.dateOffset, vm::navigateBack, vm::navigateForward)
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize().verticalScrollFixed(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             ActivityCard(act, vm.selectedTimeRange, imperial)

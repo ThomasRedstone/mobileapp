@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
+import coredevices.ui.verticalScrollFixed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
@@ -396,7 +396,7 @@ fun BugReportScreen(
                 modifier = Modifier
                     .padding(paddingValues)
                     .fillMaxHeight()
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScrollFixed(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 TextField(

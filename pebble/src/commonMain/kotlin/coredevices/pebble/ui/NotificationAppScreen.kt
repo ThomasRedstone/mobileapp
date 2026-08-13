@@ -1,6 +1,7 @@
 package coredevices.pebble.ui
 
 import coredevices.ui.PebbleElevatedButton
+import coredevices.ui.verticalDragFix
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import kotlin.time.Clock
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -126,8 +128,10 @@ fun NotificationAppScreen(
         appWrapper?.let { appWrapper ->
             val app = appWrapper.app
             val bootConfig = rememberBootConfig()
+            val lazyListState = rememberLazyListState()
             LazyColumn(
-                modifier = Modifier.fillMaxSize()
+                state = lazyListState,
+                modifier = Modifier.fillMaxSize().verticalDragFix(lazyListState)
             ) {
                 item {
                     NotificationAppCard(

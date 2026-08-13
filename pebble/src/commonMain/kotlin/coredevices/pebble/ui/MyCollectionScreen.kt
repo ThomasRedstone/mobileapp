@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import coredevices.ui.verticalDragFix
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -150,7 +151,7 @@ fun MyCollectionScreen(
                 LazyVerticalGrid(
                     state = lazyGridState,
                     columns = GridCells.FixedSize(120.dp),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().verticalDragFix(lazyGridState),
                     contentPadding = PaddingValues(4.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
@@ -178,7 +179,7 @@ fun MyCollectionScreen(
             AppType.Watchapp -> {
                 LazyColumn(
                     state = lazyListState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().verticalDragFix(lazyListState),
                     contentPadding = PaddingValues(4.dp),
                 ) {
                     items(mutableApps, key = { it.uuid }) { entry ->

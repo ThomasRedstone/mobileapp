@@ -34,7 +34,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import coredevices.ui.verticalDragFix
+import coredevices.ui.verticalScrollFixed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Battery0Bar
@@ -577,7 +578,7 @@ fun WatchesScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
                 }
                 val scope = rememberCoroutineScope()
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().verticalDragFix(listState),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     // Reserve space so the last device rows can scroll clear of the floating
@@ -2065,7 +2066,7 @@ fun WatchDetails(
                 onDismissRequest = { showFirmwareUpdateConfirmDialog = false },
                 title = { Text("Install PebbleOS ${firmwareUpdateAvailable.version.stringVersion}") },
                 text = {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Column(Modifier.verticalScrollFixed(rememberScrollState())) {
                         Text(firmwareUpdateAvailable.notes)
                     }
                 },

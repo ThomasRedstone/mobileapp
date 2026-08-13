@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import coredevices.ui.verticalDragFix
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -2131,7 +2132,7 @@ fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
 
                 if (isSearching) {
                     // When searching, show all matching settings grouped by section (like before)
-                    LazyColumn(state = listState) {
+                    LazyColumn(state = listState, modifier = Modifier.verticalDragFix(listState)) {
                         groupedItemsToDisplay.forEach { (section, items) ->
                             stickyHeader {
                                 Box(
@@ -2167,7 +2168,7 @@ fun WatchSettingsScreen(navBarNav: NavBarNav, topBarParams: TopBarParams) {
                         state.healthTrackingEnabled && !state.coreConfig.preferHealthTab
 
                     // When not searching, show category list
-                    LazyColumn(state = listState) {
+                    LazyColumn(state = listState, modifier = Modifier.verticalDragFix(listState)) {
                         if (notificationsDisplaced) {
                             item(key = "displaced_notifications") {
                                 ListItem(
@@ -2277,7 +2278,8 @@ fun WatchSettingsCategoryScreen(
             }
         }
 
-        LazyColumn {
+        val lazyListState = rememberLazyListState()
+        LazyColumn(state = lazyListState, modifier = Modifier.verticalDragFix(lazyListState)) {
             items(
                 items = filteredItems,
                 key = { it.title },
