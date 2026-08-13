@@ -20,7 +20,7 @@ import java.io.File
  *  portable API for it). dbus-java's own EXTERNAL SASL auto-detection sends UID 0 in this
  *  sandboxed environment - a real upstream bug, not anything specific to this app - so the UID
  *  has to be supplied explicitly (`withSaslUid`, dbus-java PR #178). */
-private fun currentUnixUid(): Long? = try {
+internal fun currentUnixUid(): Long? = try {
     File("/proc/self/status").readLines()
         .firstOrNull { it.startsWith("Uid:") }
         ?.split(Regex("\\s+"))

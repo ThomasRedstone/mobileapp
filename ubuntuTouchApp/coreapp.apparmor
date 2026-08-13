@@ -1,4 +1,4 @@
 {
-    "policy_groups": ["bluetooth", "networking"],
+    "policy_groups": ["bluetooth", "history", "networking"],
     "policy_version": 2404.1
 }

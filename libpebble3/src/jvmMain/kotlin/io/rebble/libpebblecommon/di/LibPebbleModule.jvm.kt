@@ -62,15 +62,18 @@ actual fun createLibPebbleSettings(): Settings {
 }
 
 /**
- * Minimal platformModule for Linux/Ubuntu Touch: only the BLE connection
- * path is real here (see LinuxBleScanner/GattServer.jvm.kt/Pairing.jvm.kt).
- * Phone-integration features (calendar, calls, contacts, music,
- * geolocation, notifications) have no meaningful equivalent on a desktop
- * JVM target, so they're bound to the no-op implementations in
- * LinuxPlatformServices.kt rather than the full Android module's OS
- * integration surface.
+ * platformModule for Linux/Ubuntu Touch. The BLE connection path is real (see
+ * LinuxBleScanner/GattServer.jvm.kt/Pairing.jvm.kt), as is missed-call and SMS forwarding via
+ * com.lomiri.HistoryService (LinuxSystemCallLog/LinuxNotificationListenerConnection - see
+ * docs/ubuntu-touch-notification-bridge-plan.md). The remaining phone-integration features
+ * (calendar, contacts, music, geolocation, live call state) have no meaningful equivalent on a
+ * desktop JVM target and stay bound to the no-op implementations in LinuxPlatformServices.kt.
  */
 actual val platformModule: Module = module {
+    // Shared by LinuxSystemCallLog and LinuxNotificationListenerConnection - each independently
+    // building its own session-bus connection hit a real dbus-java race (NullPointerException
+    // from AddMatch(), confirmed live), a single eagerly-built connection doesn't.
+    single { buildSessionBusConnection() }
     single {
         PhoneCapabilities(CommonPhoneCapabilities)
     }
