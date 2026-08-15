@@ -33,6 +33,7 @@ import io.rebble.libpebblecommon.services.blobdb.TimelineActionResult
 import io.rebble.libpebblecommon.util.GeolocationPositionResult
 import io.rebble.libpebblecommon.util.SystemGeolocation
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +45,7 @@ import org.freedesktop.dbus.interfaces.DBusSigHandler
 import java.time.format.DateTimeParseException
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -258,19 +260,40 @@ class LinuxNotificationListenerConnection(
             libPebbleScope.launch { libPebble.sendNotification(notification) }
         }
         sessionBus.addSigHandler(NotificationBridge1.NotificationReceived::class.java, bridgeHandler)
-        try {
-            sessionBus.getRemoteObject(
-                NOTIFICATION_BRIDGE_BUS_NAME,
-                NOTIFICATION_BRIDGE_OBJECT_PATH,
-                NotificationBridge1::class.java,
-            ).Subscribe()
-            linuxTelephonyLogger.i { "Subscribed to NotificationBridge1" }
-        } catch (e: Exception) {
-            linuxTelephonyLogger.w(e) {
-                "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
-                    "(needs `bridge-ctl allow <identity>`) or the daemon isn't running"
+
+        // Subscribe() is a blocking D-Bus round-trip - off init()'s own (synchronous) call
+        // path, not stalling LibPebble.init()'s caller on a slow/unreachable daemon. Retries
+        // with backoff rather than once: NotAuthorized is commonly transient (the admin runs
+        // `bridge-ctl allow <identity>` after this app's first run, with no way for the daemon
+        // to notify us when that happens), and a one-shot attempt would otherwise need a full
+        // app restart to pick that up.
+        libPebbleScope.launch {
+            var retryDelay = SUBSCRIBE_RETRY_INITIAL_DELAY
+            while (true) {
+                try {
+                    sessionBus.getRemoteObject(
+                        NOTIFICATION_BRIDGE_BUS_NAME,
+                        NOTIFICATION_BRIDGE_OBJECT_PATH,
+                        NotificationBridge1::class.java,
+                    ).Subscribe()
+                    linuxTelephonyLogger.i { "Subscribed to NotificationBridge1" }
+                    return@launch
+                } catch (e: Exception) {
+                    linuxTelephonyLogger.w(e) {
+                        "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
+                            "(needs `bridge-ctl allow <identity>`) or the daemon isn't running; " +
+                            "retrying in $retryDelay"
+                    }
+                    delay(retryDelay)
+                    retryDelay = (retryDelay * 2).coerceAtMost(SUBSCRIBE_RETRY_MAX_DELAY)
+                }
             }
         }
+    }
+
+    private companion object {
+        val SUBSCRIBE_RETRY_INITIAL_DELAY = 10.seconds
+        val SUBSCRIBE_RETRY_MAX_DELAY = 5.minutes
     }
 }
 

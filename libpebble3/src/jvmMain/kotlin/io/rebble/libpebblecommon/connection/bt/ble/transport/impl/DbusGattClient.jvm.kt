@@ -82,13 +82,8 @@ class DbusGattConnector(
         }
         connection = conn
 
-        // Scoped to this device's own object (the DBusInterface overload, not the bare Class
-        // one) - an unscoped addSigHandler registers a match rule with no path filter at all,
-        // so AppArmor mediates (and, for a confined click, denies) every PropertiesChanged
-        // signal system-wide, not just this device's - confirmed live via dmesg audit spam for
-        // completely unrelated systemd units. The in-handler path check above was already
-        // filtering client-side, but only after paying for every signal's delivery and
-        // mediation first.
+        // Scoped to this device's own object — an unscoped match rule receives (and pays
+        // AppArmor mediation for) every app's PropertiesChanged signals, not just this device's.
         conn.addSigHandler(
             Properties.PropertiesChanged::class.java,
             conn.getRemoteObject("org.bluez", devicePath, Device1::class.java),
@@ -268,8 +263,11 @@ class DbusConnectedGattClient(
                 val value = signal.propertiesChanged["Value"]?.value as? ByteArray ?: return@DBusSigHandler
                 trySend(value)
             }
-            // Scoped to this characteristic's own object - see the connect()/Device1 comment
-            // above for why an unscoped registration is worth avoiding.
+            // Scoped to this characteristic's own object, same reason as connect()'s Device1
+            // handler above. removeSigHandler below must use the matching scoped overload too —
+            // DBusMatchRule.equals() compares the full rule including path, so removing via the
+            // unscoped overload silently no-ops and leaks the handler and its server-side match
+            // rule on every unsubscribe.
             connection.addSigHandler(Properties.PropertiesChanged::class.java, characteristic, handler)
             if (startedNotify.add(path)) {
                 runCatching {
@@ -278,7 +276,7 @@ class DbusConnectedGattClient(
             }
             onSubscription?.invoke()
             awaitClose {
-                connection.removeSigHandler(Properties.PropertiesChanged::class.java, handler)
+                connection.removeSigHandler(Properties.PropertiesChanged::class.java, characteristic, handler)
                 startedNotify.remove(path)
                 runCatching {
                     connection.getRemoteObject("org.bluez", path, GattCharacteristic1::class.java).StopNotify()

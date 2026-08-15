@@ -12,12 +12,9 @@ import org.freedesktop.dbus.interfaces.Properties
 private const val ADAPTER_PATH = "/org/bluez/hci0"
 private const val POLL_INTERVAL_MS = 3_000L
 
-// A single failed poll used to be reported as Disabled outright - confirmed live (dmesg/
-// bluetoothd showed no real adapter power event at the exact moment) this was a real,
-// self-inflicted cause of dropped connections: closeGattServerWhenBtDisabled defaults to true on
-// this platform, so a transient D-Bus hiccup on this poll - not a real Powered=false - was
-// enough to make the app tear down its own GATT server. Two consecutive failures (~6s of
-// confirmed-down, not one blip) before treating it as real.
+// closeGattServerWhenBtDisabled defaults to true on this platform, so a single transient poll
+// failure reported as Disabled tears down the GATT server on a real connection — require two
+// consecutive failures before treating the adapter as actually down.
 private const val CONSECUTIVE_FAILURES_BEFORE_DISABLED = 2
 
 private val logger = Logger.withTag("BluetoothState")
@@ -38,11 +35,8 @@ actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState
             } catch (e: Exception) {
                 consecutiveFailures++
                 logger.w(e) { "Couldn't poll adapter Powered state (failure $consecutiveFailures)" }
-                // The connection this loop opened once at startup can die permanently (bus
-                // daemon restart, transport drop, ...) and every subsequent poll on it fails
-                // forever with no recovery - confirmed live: 16 consecutive NotConnected
-                // failures on the same connection object, never reattempted. Rebuild it rather
-                // than keep polling a connection that's never coming back.
+                // A NotConnected connection never recovers on its own — rebuild it, or every
+                // subsequent poll fails forever.
                 if (e is NotConnected) {
                     runCatching { connection.disconnect() }
                     connection = buildSystemBusConnection()
