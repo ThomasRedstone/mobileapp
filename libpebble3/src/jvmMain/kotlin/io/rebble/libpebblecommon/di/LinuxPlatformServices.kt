@@ -264,6 +264,7 @@ class LinuxNotificationListenerConnection(
                 NOTIFICATION_BRIDGE_OBJECT_PATH,
                 NotificationBridge1::class.java,
             ).Subscribe()
+            linuxTelephonyLogger.i { "Subscribed to NotificationBridge1" }
         } catch (e: Exception) {
             linuxTelephonyLogger.w(e) {
                 "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
