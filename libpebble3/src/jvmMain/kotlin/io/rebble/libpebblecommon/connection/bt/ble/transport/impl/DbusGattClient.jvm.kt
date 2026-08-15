@@ -82,14 +82,25 @@ class DbusGattConnector(
         }
         connection = conn
 
-        conn.addSigHandler(Properties.PropertiesChanged::class.java, DBusSigHandler { signal ->
-            if (signal.path != devicePath || signal.interfaceName != "org.bluez.Device1") return@DBusSigHandler
-            val connectedNow = signal.propertiesChanged["Connected"]?.value as? Boolean
-            if (connectedNow == false && !_disconnected.isCompleted) {
-                logger.i { "Disconnection (PropertiesChanged Connected=false)" }
-                _disconnected.complete(ConnectionFailureReason.FailedToConnect)
-            }
-        })
+        // Scoped to this device's own object (the DBusInterface overload, not the bare Class
+        // one) - an unscoped addSigHandler registers a match rule with no path filter at all,
+        // so AppArmor mediates (and, for a confined click, denies) every PropertiesChanged
+        // signal system-wide, not just this device's - confirmed live via dmesg audit spam for
+        // completely unrelated systemd units. The in-handler path check above was already
+        // filtering client-side, but only after paying for every signal's delivery and
+        // mediation first.
+        conn.addSigHandler(
+            Properties.PropertiesChanged::class.java,
+            conn.getRemoteObject("org.bluez", devicePath, Device1::class.java),
+            DBusSigHandler { signal ->
+                if (signal.interfaceName != "org.bluez.Device1") return@DBusSigHandler
+                val connectedNow = signal.propertiesChanged["Connected"]?.value as? Boolean
+                if (connectedNow == false && !_disconnected.isCompleted) {
+                    logger.i { "Disconnection (PropertiesChanged Connected=false)" }
+                    _disconnected.complete(ConnectionFailureReason.FailedToConnect)
+                }
+            },
+        )
 
         // WatchManager always awaits `disconnected` after connect() returns, success or
         // failure - every Failure path below must complete it, or WatchManager hangs forever
@@ -251,15 +262,18 @@ class DbusConnectedGattClient(
             return null
         }
         return callbackFlow {
+            val characteristic = connection.getRemoteObject("org.bluez", path, GattCharacteristic1::class.java)
             val handler = DBusSigHandler<Properties.PropertiesChanged> { signal ->
-                if (signal.path != path || signal.interfaceName != "org.bluez.GattCharacteristic1") return@DBusSigHandler
+                if (signal.interfaceName != "org.bluez.GattCharacteristic1") return@DBusSigHandler
                 val value = signal.propertiesChanged["Value"]?.value as? ByteArray ?: return@DBusSigHandler
                 trySend(value)
             }
-            connection.addSigHandler(Properties.PropertiesChanged::class.java, handler)
+            // Scoped to this characteristic's own object - see the connect()/Device1 comment
+            // above for why an unscoped registration is worth avoiding.
+            connection.addSigHandler(Properties.PropertiesChanged::class.java, characteristic, handler)
             if (startedNotify.add(path)) {
                 runCatching {
-                    connection.getRemoteObject("org.bluez", path, GattCharacteristic1::class.java).StartNotify()
+                    characteristic.StartNotify()
                 }.onFailure { logger.e(it) { "StartNotify failed for $path" } }
             }
             onSubscription?.invoke()
