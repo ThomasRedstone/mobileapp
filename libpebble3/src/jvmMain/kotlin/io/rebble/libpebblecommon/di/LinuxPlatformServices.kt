@@ -2,6 +2,7 @@ package io.rebble.libpebblecommon.di
 
 import androidx.compose.ui.graphics.ImageBitmap
 import co.touchlab.kermit.Logger
+import io.rebble.libpebblecommon.SystemAppIDs.ANDROID_NOTIFICATIONS_UUID
 import io.rebble.libpebblecommon.SystemAppIDs.SMS_APP_UUID
 import io.rebble.libpebblecommon.calendar.CalendarEvent
 import io.rebble.libpebblecommon.calendar.NewCalendarEvent
@@ -41,6 +42,7 @@ import kotlinx.coroutines.launch
 import org.freedesktop.dbus.connections.impl.DBusConnection
 import org.freedesktop.dbus.interfaces.DBusSigHandler
 import java.time.format.DateTimeParseException
+import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -199,19 +201,26 @@ class LinuxNotificationAppsSync : NotificationAppsSync {
 }
 
 /**
- * There's no OS notification-listener API on this platform to generically forward - see
- * docs/ubuntu-touch-notification-bridge-plan.md for why (org.freedesktop.Notifications is owned
- * by lomiri itself, not interceptable from a confined click). SMS specifically is real and
- * sanctioned, though, via `com.lomiri.HistoryService` (the `history` policy group) - subscribed
- * to directly here rather than through any generic listener pipeline, and synthesized into a
- * TimelineNotification the same way any other notification source would be.
+ * Two independent notification sources feed into this, not one:
+ *
+ * - SMS via `com.lomiri.HistoryService` (the `history` policy group) - a sanctioned, narrowly
+ *   scoped OS API that exists specifically for this, subscribed to directly.
+ * - Everything else via `org.thomasredstone.NotificationBridge1` (`../ut-notify`) - a standalone
+ *   daemon that eavesdrops `org.freedesktop.Notifications.Notify` system-wide (something a
+ *   confined Click structurally cannot do itself - see
+ *   docs/ubuntu-touch-notification-bridge-plan.md) and re-broadcasts approved subscribers a
+ *   kernel-verified source app identity alongside each notification's original arguments,
+ *   unchanged. Subscription needs a one-time manual `bridge-ctl allow <identity>` from whoever
+ *   administers the phone (see ../ut-notify/docs/notification-bridge-api.md) - NotAuthorized
+ *   until then is expected, not a bug, and this degrades to "no generic notifications" rather
+ *   than failing loudly.
  */
 class LinuxNotificationListenerConnection(
     private val sessionBus: DBusConnection,
     private val libPebbleScope: LibPebbleCoroutineScope,
 ) : NotificationListenerConnection {
     override fun init(libPebble: LibPebble) {
-        val handler = DBusSigHandler<HistoryService.EventsAdded> { signal ->
+        val smsHandler = DBusSigHandler<HistoryService.EventsAdded> { signal ->
             signal.events
                 .filter { it.int("type") == HISTORY_EVENT_TYPE_TEXT }
                 .mapNotNull { it.toHistoryTextEvent() }
@@ -232,7 +241,35 @@ class LinuxNotificationListenerConnection(
                     libPebbleScope.launch { libPebble.sendNotification(notification) }
                 }
         }
-        sessionBus.addSigHandler(HistoryService.EventsAdded::class.java, handler)
+        sessionBus.addSigHandler(HistoryService.EventsAdded::class.java, smsHandler)
+
+        val bridgeHandler = DBusSigHandler<NotificationBridge1.NotificationReceived> { signal ->
+            val notification = buildTimelineNotification(
+                parentId = ANDROID_NOTIFICATIONS_UUID,
+                timestamp = Clock.System.now(),
+            ) {
+                attributes {
+                    title { signal.summary.ifBlank { signal.appName } }
+                    body { signal.body }
+                    tinyIcon { TimelineIcon.NotificationGeneric }
+                    sender { signal.appName }
+                }
+            }
+            libPebbleScope.launch { libPebble.sendNotification(notification) }
+        }
+        sessionBus.addSigHandler(NotificationBridge1.NotificationReceived::class.java, bridgeHandler)
+        try {
+            sessionBus.getRemoteObject(
+                NOTIFICATION_BRIDGE_BUS_NAME,
+                NOTIFICATION_BRIDGE_OBJECT_PATH,
+                NotificationBridge1::class.java,
+            ).Subscribe()
+        } catch (e: Exception) {
+            linuxTelephonyLogger.w(e) {
+                "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
+                    "(needs `bridge-ctl allow <identity>`) or the daemon isn't running"
+            }
+        }
     }
 }
 
