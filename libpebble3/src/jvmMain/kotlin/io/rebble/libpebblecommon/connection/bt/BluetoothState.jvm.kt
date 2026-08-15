@@ -6,6 +6,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.buildSystemBus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.freedesktop.dbus.exceptions.NotConnected
 import org.freedesktop.dbus.interfaces.Properties
 
 private const val ADAPTER_PATH = "/org/bluez/hci0"
@@ -24,9 +25,9 @@ private val logger = Logger.withTag("BluetoothState")
 // Polls the adapter's Powered property over D-Bus (dbus-java) rather than subscribing to
 // PropertiesChanged, matching the polling pattern already used for pairing state.
 actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState>? = flow {
-    val connection = buildSystemBusConnection()
+    var connection = buildSystemBusConnection()
+    var props = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Properties::class.java)
     try {
-        val props = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Properties::class.java)
         var last: BluetoothState? = null
         var consecutiveFailures = 0
         while (true) {
@@ -37,6 +38,16 @@ actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState
             } catch (e: Exception) {
                 consecutiveFailures++
                 logger.w(e) { "Couldn't poll adapter Powered state (failure $consecutiveFailures)" }
+                // The connection this loop opened once at startup can die permanently (bus
+                // daemon restart, transport drop, ...) and every subsequent poll on it fails
+                // forever with no recovery - confirmed live: 16 consecutive NotConnected
+                // failures on the same connection object, never reattempted. Rebuild it rather
+                // than keep polling a connection that's never coming back.
+                if (e is NotConnected) {
+                    runCatching { connection.disconnect() }
+                    connection = buildSystemBusConnection()
+                    props = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Properties::class.java)
+                }
                 if (consecutiveFailures < CONSECUTIVE_FAILURES_BEFORE_DISABLED) {
                     last
                 } else {
