@@ -9,6 +9,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.transport.BleScanner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.freedesktop.dbus.exceptions.NotConnected
 import org.freedesktop.dbus.interfaces.ObjectManager
 import kotlin.time.Duration.Companion.seconds
 
@@ -23,9 +24,9 @@ internal class LinuxBleScanner(
     @Suppress("UNUSED_PARAMETER") private val bleConfigFlow: BleConfigFlow,
 ) : BleScanner {
     override fun scan(): Flow<BleScanResult> = flow {
-        val connection = buildSystemBusConnection()
+        var connection = buildSystemBusConnection()
         try {
-            val adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+            var adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
             try {
                 adapter.StartDiscovery()
             } catch (e: Exception) {
@@ -33,21 +34,32 @@ internal class LinuxBleScanner(
                 return@flow
             }
             try {
-                val objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
+                var objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
                 val seen = mutableSetOf<String>()
                 while (true) {
-                    objectManager.GetManagedObjects().parseBluezDevices().forEach { device ->
-                        val address = device.address ?: return@forEach
-                        if (!seen.add(address)) return@forEach
-                        val manufacturerData = device.manufacturerData.entries.firstOrNull() ?: return@forEach
-                        emit(
-                            BleScanResult(
-                                identifier = PebbleBleIdentifier(address),
-                                name = device.name ?: address,
-                                rssi = device.rssi ?: 0,
-                                manufacturerData = ManufacturerData(manufacturerData.key, manufacturerData.value),
+                    try {
+                        objectManager.GetManagedObjects().parseBluezDevices().forEach { device ->
+                            val address = device.address ?: return@forEach
+                            if (!seen.add(address)) return@forEach
+                            val manufacturerData = device.manufacturerData.entries.firstOrNull() ?: return@forEach
+                            emit(
+                                BleScanResult(
+                                    identifier = PebbleBleIdentifier(address),
+                                    name = device.name ?: address,
+                                    rssi = device.rssi ?: 0,
+                                    manufacturerData = ManufacturerData(manufacturerData.key, manufacturerData.value),
+                                )
                             )
-                        )
+                        }
+                    } catch (e: NotConnected) {
+                        // A dead connection never recovers on its own — rebuild it and re-arm
+                        // discovery, or every subsequent poll fails forever.
+                        logger.w(e) { "Scan connection died, rebuilding" }
+                        runCatching { connection.disconnect() }
+                        connection = buildSystemBusConnection()
+                        adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+                        objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
+                        runCatching { adapter.StartDiscovery() }
                     }
                     delay(POLL_INTERVAL)
                 }

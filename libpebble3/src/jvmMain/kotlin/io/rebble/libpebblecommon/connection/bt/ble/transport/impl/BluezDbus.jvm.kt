@@ -4,6 +4,7 @@ import org.freedesktop.dbus.DBusPath
 import org.freedesktop.dbus.annotations.DBusInterfaceName
 import org.freedesktop.dbus.connections.impl.DBusConnection
 import org.freedesktop.dbus.connections.impl.DBusConnectionBuilder
+import org.freedesktop.dbus.exceptions.NotConnected
 import org.freedesktop.dbus.interfaces.DBusInterface
 import org.freedesktop.dbus.messages.MethodCall
 import org.freedesktop.dbus.types.Variant
@@ -47,6 +48,38 @@ internal fun buildSystemBusConnection(): DBusConnection {
         builder.transportConfig().configureSasl().withSaslUid(uid).back()
     }
     return builder.build()
+}
+
+/**
+ * A [buildSystemBusConnection] held for longer than a single call/attempt (a `by lazy` singleton,
+ * or reused across loop iterations) can die permanently mid-lifetime - confirmed live, twice, in
+ * one session: [io.rebble.libpebblecommon.connection.bt.Pairing.jvm.kt]'s old `by lazy` connection
+ * hit this first (every `Pair()` after that point failed with NotConnected, forever, since a
+ * `by lazy` value only builds once), then BluetoothState.jvm.kt's poll loop hit the identical
+ * failure the very next test run. Wrap any such long-lived connection in this instead of holding
+ * a bare `DBusConnection` - [withConnection] rebuilds once and retries on NotConnected rather than
+ * failing forever on a connection that's never coming back.
+ */
+internal class SelfHealingSystemBusConnection {
+    @Volatile
+    private var connection: DBusConnection = buildSystemBusConnection()
+
+    @Synchronized
+    private fun rebuild(): DBusConnection {
+        runCatching { connection.disconnect() }
+        return buildSystemBusConnection().also { connection = it }
+    }
+
+    fun <T> withConnection(block: (DBusConnection) -> T): T =
+        try {
+            block(connection)
+        } catch (e: NotConnected) {
+            block(rebuild())
+        }
+
+    fun disconnect() {
+        runCatching { connection.disconnect() }
+    }
 }
 
 @DBusInterfaceName("org.bluez.Adapter1")

@@ -8,7 +8,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.pebble.ConnectivityWatcher
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_BONDED
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_NONE
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Device1
-import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.buildSystemBusConnection
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.SelfHealingSystemBusConnection
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -26,17 +26,21 @@ private val POLL_INTERVAL = 1.seconds
 
 // Reused across calls rather than opened per poll - SASL handshake overhead per connection is
 // real, and DbusConnectedGattClient already establishes the same "one connection, many calls"
-// pattern for the GATT side. The reply-wait timeout generous enough for Device1.Pair() (BlueZ
+// pattern for the GATT side. Self-healing because this connection lives for the process lifetime
+// and a dead D-Bus connection never recovers on its own (confirmed live: every Pair() after one
+// NotConnected failed forever). The reply-wait timeout generous enough for Device1.Pair() (BlueZ
 // blocks until the watch's own pairing prompt is answered by a human) is set globally in
 // buildSystemBusConnection() itself - see BluezDbus.jvm.kt.
-private val connection by lazy { buildSystemBusConnection() }
+private val connectionHolder = SelfHealingSystemBusConnection()
 
 private fun devicePath(identifier: PebbleBleIdentifier): String =
     "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
 
 private fun isPaired(devicePath: String): Boolean = try {
-    val props = connection.getRemoteObject("org.bluez", devicePath, Properties::class.java)
-    props.Get<Boolean>("org.bluez.Device1", "Paired") == true
+    connectionHolder.withConnection { connection ->
+        val props = connection.getRemoteObject("org.bluez", devicePath, Properties::class.java)
+        props.Get<Boolean>("org.bluez.Device1", "Paired") == true
+    }
 } catch (e: Exception) {
     logger.e(e) { "couldn't read Paired for $devicePath" }
     false
@@ -47,7 +51,9 @@ actual fun isBonded(identifier: PebbleBleIdentifier): Boolean = isPaired(deviceP
 actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
     logger.d("createBond()")
     return try {
-        val device = connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java)
+        val device = connectionHolder.withConnection { connection ->
+            connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java)
+        }
         // Pair() blocks on its D-Bus reply until the human answers the watch's own pairing
         // prompt - firing it on a background thread keeps createBond() itself non-blocking,
         // matching every other platform (this only requests the bond; PebblePairing.kt already
