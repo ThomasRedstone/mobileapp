@@ -515,6 +515,13 @@ fun LockerAppScreen(topBarParams: TopBarParams, uuid: Uuid?, navBarNav: NavBarNa
                                             if (!launched) {
                                                 viewModel.addedToLocker = false
                                             }
+                                        } else {
+                                            // No connected watch to push to right now - the add is real
+                                            // (it's in the locker DB and will sync automatically next
+                                            // connect, per BlobDB's reactive dirty-record sync), but say so
+                                            // explicitly rather than showing the same "added" state a
+                                            // confirmed-on-watch add would.
+                                            topBarParams.showSnackbar("Added - will sync to watch once connected")
                                         }
                                     }
                                 },
