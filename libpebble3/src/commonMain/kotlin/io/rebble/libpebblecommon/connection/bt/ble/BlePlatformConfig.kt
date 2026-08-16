@@ -33,4 +33,11 @@ data class BlePlatformConfig(
      *  ~5s (MOB-9394), wedging Kable's write() before any bytes are dispatched.
      *  When set, WithoutResponse writes time out after this and re-issue. */
     val writeWithoutResponseStallTimeout: Duration? = null,
+    /** When reversed-PPoG subscribe setup fails, whether to fall back to hosting forward PPoG
+     *  for that connection. Correct on iOS, where a stale cached GATT service is the usual cause
+     *  and CoreBluetooth gives no way to force re-discovery. Wrong on a platform where forward is
+     *  the fragile path and the watch genuinely hosts the reversed service - there, failing the
+     *  connect and letting the normal retry loop re-run reversed setup fresh is the better
+     *  reaction. */
+    val fallbackToForwardPpogOnReversedSetupFailure: Boolean = true,
 )

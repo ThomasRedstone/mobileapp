@@ -71,6 +71,7 @@ enum class ConnectionFailureReason {
     // undone the backoff's escalation on a flapping connection.
     Disconnected,
     TimeoutInitializingPpog,
+    ReversedPpogSetupFailed,
     ClassicConnectionFailed,
     ClassicDisconnected,
 }

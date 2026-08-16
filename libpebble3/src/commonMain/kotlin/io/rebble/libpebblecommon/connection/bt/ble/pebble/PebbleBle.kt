@@ -7,6 +7,7 @@ import io.rebble.libpebblecommon.connection.KnownWatchProperties
 import io.rebble.libpebblecommon.connection.PebbleBleIdentifier
 import io.rebble.libpebblecommon.connection.PebbleConnectionResult
 import io.rebble.libpebblecommon.connection.TransportConnector
+import io.rebble.libpebblecommon.connection.bt.ble.BlePlatformConfig
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.TARGET_MTU
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOGATT_DEVICE_CHARACTERISTIC_READ
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOGATT_DEVICE_SERVICE_UUID_CLIENT
@@ -42,6 +43,7 @@ class PebbleBle(
     private val batteryWatcher: BatteryWatcher,
     private val preConnectScanner: PreConnectScanner,
     private val libPebbleConfigFlow: LibPebbleConfigFlow,
+    private val blePlatformConfig: BlePlatformConfig,
 ) : TransportConnector {
     private val logger = Logger.withTag("PebbleBle/${identifier.asString}")
 
@@ -186,6 +188,14 @@ class PebbleBle(
                 ppogPacketSenderProxy.configureReversed(device, reversedConfig)
                 true
             } catch (e: Exception) {
+                if (!blePlatformConfig.fallbackToForwardPpogOnReversedSetupFailure) {
+                    // Forward is the fragile path here, and the watch genuinely hosts the
+                    // reversed service - falling back would trade a working transport for a
+                    // broken one. Fail the connect and let the normal retry loop re-run
+                    // reversed setup fresh instead.
+                    logger.w(e) { "reversed PPoG setup failed - failing connect to retry reversed" }
+                    return PebbleConnectionResult.Failed(ConnectionFailureReason.ReversedPpogSetupFailed)
+                }
                 // iOS in particular can return a `40000000` reversed-PPoG
                 // service in its cached GATT results even after the watch
                 // stopped advertising it (booted into a firmware without

@@ -10,6 +10,8 @@ import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_NONE
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Adapter1
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Device1
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.SelfHealingSystemBusConnection
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.devicePathFor
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.resolveAdapterPath
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +28,6 @@ import kotlin.time.Duration.Companion.seconds
  */
 private val logger = Logger.withTag("Pairing")
 private val POLL_INTERVAL = 1.seconds
-private const val ADAPTER_PATH = "/org/bluez/hci0"
 private const val REDISCOVER_TIMEOUT_MS = 15_000L
 private const val REDISCOVER_POLL_MS = 500L
 
@@ -39,8 +40,16 @@ private const val REDISCOVER_POLL_MS = 500L
 // buildSystemBusConnection() itself - see BluezDbus.jvm.kt.
 private val connectionHolder = SelfHealingSystemBusConnection()
 
+// The adapter object doesn't move around at runtime, so resolving it once and caching is enough
+// - avoids an extra ObjectManager round-trip on every single poll/pair call.
+@Volatile
+private var cachedAdapterPath: String? = null
+
+private fun adapterPath(): String =
+    cachedAdapterPath ?: connectionHolder.withConnection { resolveAdapterPath(it) }.also { cachedAdapterPath = it }
+
 private fun devicePath(identifier: PebbleBleIdentifier): String =
-    "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
+    devicePathFor(adapterPath(), identifier.asString)
 
 private fun isPaired(devicePath: String): Boolean = try {
     connectionHolder.withConnection { connection ->
@@ -90,7 +99,7 @@ actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
                 if (isPaired(path)) {
                     logger.d { "already marked Paired - removing device and rescanning to force a fresh pairing" }
                     connectionHolder.withConnection { connection ->
-                        val adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+                        val adapter = connection.getRemoteObject("org.bluez", adapterPath(), Adapter1::class.java)
                         runCatching { adapter.RemoveDevice(DBusPath(path)) }
                         runCatching { adapter.StartDiscovery() }
                         val found = waitForDeviceObject(connection, path)

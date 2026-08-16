@@ -26,7 +26,7 @@ internal class LinuxBleScanner(
     override fun scan(): Flow<BleScanResult> = flow {
         var connection = buildSystemBusConnection()
         try {
-            var adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+            var adapter = connection.getRemoteObject("org.bluez", resolveAdapterPath(connection), Adapter1::class.java)
             try {
                 adapter.StartDiscovery()
             } catch (e: Exception) {
@@ -64,7 +64,7 @@ internal class LinuxBleScanner(
                         logger.w(e) { "Scan connection died, rebuilding" }
                         runCatching { connection.disconnect() }
                         connection = buildSystemBusConnection()
-                        adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+                        adapter = connection.getRemoteObject("org.bluez", resolveAdapterPath(connection), Adapter1::class.java)
                         objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
                         runCatching { adapter.StartDiscovery() }
                     }
@@ -79,7 +79,6 @@ internal class LinuxBleScanner(
     }
 
     companion object {
-        private const val ADAPTER_PATH = "/org/bluez/hci0"
         private val POLL_INTERVAL = 2.seconds
     }
 }

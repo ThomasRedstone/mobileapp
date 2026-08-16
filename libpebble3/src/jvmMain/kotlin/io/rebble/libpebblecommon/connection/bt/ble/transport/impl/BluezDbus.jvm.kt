@@ -6,9 +6,32 @@ import org.freedesktop.dbus.connections.impl.DBusConnection
 import org.freedesktop.dbus.connections.impl.DBusConnectionBuilder
 import org.freedesktop.dbus.exceptions.NotConnected
 import org.freedesktop.dbus.interfaces.DBusInterface
+import org.freedesktop.dbus.interfaces.ObjectManager
 import org.freedesktop.dbus.messages.MethodCall
 import org.freedesktop.dbus.types.Variant
 import java.io.File
+
+/** Fallback used only when the adapter can't be discovered via [resolveAdapterPath] (e.g. the
+ *  ObjectManager call itself fails) - the name every BlueZ install this app targets has used so
+ *  far, kept as a last resort rather than a primary assumption. */
+internal const val DEFAULT_ADAPTER_PATH = "/org/bluez/hci0"
+
+/**
+ * Finds the actual adapter object path via BlueZ's ObjectManager rather than assuming
+ * [DEFAULT_ADAPTER_PATH] - a device with more than one adapter, or a future BlueZ/kernel where
+ * the first adapter isn't named "hci0", would otherwise silently talk to a path that doesn't
+ * exist or isn't the adapter actually in use.
+ */
+internal fun resolveAdapterPath(connection: DBusConnection): String {
+    val objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
+    return objectManager.GetManagedObjects().keys
+        .map { it.path }
+        .firstOrNull { path -> path.substringAfterLast('/').startsWith("hci") }
+        ?: DEFAULT_ADAPTER_PATH
+}
+
+internal fun devicePathFor(adapterPath: String, deviceAddress: String): String =
+    "$adapterPath/dev_" + deviceAddress.replace(":", "_")
 
 /**
  * Shared `dbus-java` plumbing for talking to BlueZ over the system bus - the only viable path

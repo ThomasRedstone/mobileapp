@@ -10,6 +10,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOG
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.UUIDs.PPOGATT_DEVICE_SERVICE_UUID_SERVER
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.SERVER_META_RESPONSE
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.buildSystemBusConnection
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.resolveAdapterPath
 import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.SendChannel
@@ -39,7 +40,6 @@ import kotlin.uuid.Uuid
 private val logger = Logger.withTag("GattServer")
 
 private const val GATT_APP_PATH = "/io/rebble/pebble/ppog"
-private const val ADAPTER_PATH = "/org/bluez/hci0"
 // Under the firmware's own ack-timeout budget (5-6s) so a watch that never subscribes fails
 // this send before the watch itself would already be timing out the exchange.
 private val NOTIFY_SUBSCRIBE_TIMEOUT = 4.seconds
@@ -264,7 +264,7 @@ actual class GattServer(
                 conn.exportObject(fakeCharPath, fakeChar)
 
                 val gattManager = conn.getRemoteObject(
-                    "org.bluez", ADAPTER_PATH, GattManager1::class.java,
+                    "org.bluez", resolveAdapterPath(conn), GattManager1::class.java,
                 )
                 try {
                     gattManager.RegisterApplication(DBusPath("/"), emptyMap())
@@ -295,7 +295,7 @@ actual class GattServer(
     actual suspend fun closeServer() {
         val conn = connection ?: return
         try {
-            conn.getRemoteObject("org.bluez", ADAPTER_PATH, GattManager1::class.java)
+            conn.getRemoteObject("org.bluez", resolveAdapterPath(conn), GattManager1::class.java)
                 .UnregisterApplication(DBusPath("/"))
         } catch (e: Exception) {
             // Best-effort, matches the previous companion process's own DBusException swallow.

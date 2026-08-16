@@ -47,9 +47,6 @@ import kotlin.uuid.Uuid
  */
 private val logger = Logger.withTag("DbusGattClient")
 
-private fun bluezDevicePath(identifier: PebbleBleIdentifier): String =
-    "/org/bluez/hci0/dev_" + identifier.asString.replace(":", "_")
-
 @DBusInterfaceName("org.bluez.GattCharacteristic1")
 private interface GattCharacteristic1 : DBusInterface {
     fun ReadValue(options: Map<String, Variant<*>>): ByteArray
@@ -64,7 +61,9 @@ class DbusGattConnector(
     private val blePlatformConfig: BlePlatformConfig,
 ) : GattConnector {
     private val logger = Logger.withTag("DbusGattConnector/${identifier.asString}")
-    private val devicePath = bluezDevicePath(identifier)
+    // Resolved once the connection is up, in connect() - needs a live connection to query the
+    // real adapter path via resolveAdapterPath() rather than assuming hci0.
+    private lateinit var devicePath: String
 
     private val _disconnected = CompletableDeferred<ConnectionFailureReason>()
     override val disconnected: Deferred<ConnectionFailureReason> = _disconnected
@@ -82,6 +81,7 @@ class DbusGattConnector(
             return GattConnectionResult.Failure(ConnectionFailureReason.FailedToConnect)
         }
         connection = conn
+        devicePath = devicePathFor(resolveAdapterPath(conn), identifier.asString)
 
         // Scoped to this device's own object — an unscoped match rule receives (and pays
         // AppArmor mediation for) every app's PropertiesChanged signals, not just this device's.

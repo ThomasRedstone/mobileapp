@@ -114,6 +114,12 @@ actual val platformModule: Module = module {
             // no fast mode for bulk transfers, no low-power idle mode. Let it keep managing them;
             // BlueZ/the kernel central honours standard L2CAP param-update requests by default.
             phoneManagesConnectionParams = false,
+            // On production Obelix firmware this watch takes the reversed-PPoG path, where
+            // forward is the fragile fallback (see GattServer.jvm.kt's non-self-healing history) -
+            // falling back to it on a reversed setup failure trades a working transport for a
+            // broken one. Fail the connect instead and let the normal retry loop re-run reversed
+            // setup fresh.
+            fallbackToForwardPpogOnReversedSetupFailure = false,
         )
     }
     singleOf(::JvmClassicScanner) bind ClassicScanner::class
