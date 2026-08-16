@@ -1,0 +1,42 @@
+name: Ubuntu Touch distributable (ARM64)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 21
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Cache build deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ut-arm64-deps-${{ runner.os }}-${{ hashFiles('gradle/**', 'gradlew*', 'gradle.properties', '*.gradle*') }}
+          restore-keys: |
+            ut-arm64-deps-${{ runner.os }}-
+      - name: Use dummy google-services json
+        run: mv androidApp/src/google-services-dummy.json androidApp/src/google-services.json
+      - name: Build distributable (native ARM64 - no qemu cross-compile)
+        run: ./gradlew :composeApp:createDistributable --no-configuration-cache
+        env:
+          GITHUB_ACTOR: ${{ secrets.READ_PACKAGES_ACTOR }}
+          GITHUB_TOKEN: ${{ secrets.READ_PACKAGES_TOKEN }}
+      - name: Verify architecture
+        run: file composeApp/build/compose/binaries/main/app/coreapp/bin/coreapp
+      - name: Upload distributable
+        uses: actions/upload-artifact@v4
+        with:
+          name: coreapp-distributable
+          path: composeApp/build/compose/binaries/main/app/coreapp/
+          retention-days: 7
