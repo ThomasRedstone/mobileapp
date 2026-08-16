@@ -108,6 +108,12 @@ actual val platformModule: Module = module {
             // floor), and PPoG.updateMtu() throws on any decrease, causing an intermittent,
             // timing-dependent connection failure whenever the transient 339 was observed.
             useNativeMtu = false,
+            // Nothing on this platform calls the equivalent of requestConnectionPriority, so
+            // telling the watch's firmware to stop managing its own connection parameters (the
+            // default) just permanently disables its ResponseTime state machine for no benefit -
+            // no fast mode for bulk transfers, no low-power idle mode. Let it keep managing them;
+            // BlueZ/the kernel central honours standard L2CAP param-update requests by default.
+            phoneManagesConnectionParams = false,
         )
     }
     singleOf(::JvmClassicScanner) bind ClassicScanner::class
