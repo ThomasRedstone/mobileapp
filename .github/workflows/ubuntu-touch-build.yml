@@ -17,7 +17,26 @@ jobs:
         with:
           submodules: recursive
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        # android-actions/setup-android installs the legacy "tools" meta-package by default,
+        # which pulls in the emulator - unavailable for linux-aarch64, so it fails outright.
+        # No emulator is needed for a build, only enough SDK to let Gradle configure the
+        # project graph (which includes Android modules even when only building the desktop
+        # distributable) - install just those packages directly instead.
+        run: |
+          SDK_ROOT="$HOME/android-sdk"
+          CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip"
+          mkdir -p "$SDK_ROOT/cmdline-tools"
+          curl -sSL "$CMDLINE_TOOLS_URL" -o cmdline-tools.zip
+          unzip -q cmdline-tools.zip -d "$SDK_ROOT/cmdline-tools"
+          mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
+          # Licenses accepted here cover AGP's own SDK auto-download too (same sdk_root), so
+          # build-tools doesn't need to be pinned/installed explicitly - AGP fetches whichever
+          # version it wants for compileSdk 37 on demand.
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_ROOT" \
+            "platform-tools" "platforms;android-37" >/dev/null
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK_ROOT" > local.properties
       - name: Cache build deps
         uses: actions/cache@v4
         with:
