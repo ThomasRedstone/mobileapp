@@ -616,8 +616,12 @@ class WatchManager(
                 // do it after returning - cleanup() below cancels connectionScope, which races
                 // with (and usually wins against) that coroutine ever getting back to its own
                 // updateFailureReason() call, so unthrottled fast failures were never counted
-                // and never backed off.
-                device.updateFailureReason(reason)
+                // and never backed off. NotAnError_NeverAttmpedConnection is exactly what its
+                // name says - recording it would reset the backoff tier on every occurrence
+                // instead of escalating it.
+                if (reason != ConnectionFailureReason.NotAnError_NeverAttmpedConnection) {
+                    device.updateFailureReason(reason)
+                }
                 connectionKoinScope.cleanup()
             }
 
