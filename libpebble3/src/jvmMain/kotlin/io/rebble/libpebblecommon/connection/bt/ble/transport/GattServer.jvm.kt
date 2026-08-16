@@ -40,6 +40,9 @@ private val logger = Logger.withTag("GattServer")
 
 private const val GATT_APP_PATH = "/io/rebble/pebble/ppog"
 private const val ADAPTER_PATH = "/org/bluez/hci0"
+// Under the firmware's own ack-timeout budget (5-6s) so a watch that never subscribes fails
+// this send before the watch itself would already be timing out the exchange.
+private val NOTIFY_SUBSCRIBE_TIMEOUT = 4.seconds
 
 @DBusInterfaceName("org.bluez.GattManager1")
 internal interface GattManager1 : DBusInterface {
@@ -98,6 +101,14 @@ internal class ExportedCharacteristic(
     var onReadRequested: (device: String) -> Unit = {}
     var onWrite: (device: String, value: ByteArray) -> Unit = { _, _ -> }
 
+    // Lets sendData() wait for the real StartNotify subscribe event instead of sending into a
+    // link the watch's firmware will silently drop before it exists - see StartNotify() below.
+    private val firstSubscribe = CompletableDeferred<Unit>()
+    suspend fun awaitNotifying() {
+        if (notifying) return
+        firstSubscribe.await()
+    }
+
     override fun getObjectPath() = path
 
     // Synchronous, matching the proven prototype: our characteristics (meta response, fake
@@ -119,6 +130,7 @@ internal class ExportedCharacteristic(
     // tracking subscribers here.
     override fun StartNotify() {
         notifying = true
+        if (!firstSubscribe.isCompleted) firstSubscribe.complete(Unit)
         logger.d { "notify subscribed: $uuid" }
     }
 
@@ -320,7 +332,18 @@ actual class GattServer(
             return SendResult.Failed
         }
         if (!char.notifying) {
-            logger.w { "sendData: char=${char.uuid} has no active StartNotify subscription - BlueZ will likely drop this notify silently" }
+            // A send here would land on a link the watch's firmware hasn't created its receiving
+            // client for yet (BlueZ accepts the write regardless, then silently drops it) -
+            // wait for the real subscribe instead of finding that out the hard way. Bounded so a
+            // watch that never subscribes still fails fast rather than hanging the caller
+            // forever - PPoG.kt's sendPacketImmediately() treats a Failed result as fatal, which
+            // is the correct reaction here (matches finding 3's propagate-don't-lie fix on the
+            // client side).
+            val subscribed = withTimeoutOrNull(NOTIFY_SUBSCRIBE_TIMEOUT) { char.awaitNotifying() }
+            if (subscribed == null) {
+                logger.w { "sendData: char=${char.uuid} still not subscribed after $NOTIFY_SUBSCRIBE_TIMEOUT - dropping" }
+                return SendResult.Failed
+            }
         }
         return try {
             char.value = data

@@ -30,8 +30,15 @@ internal class LinuxBleScanner(
             try {
                 adapter.StartDiscovery()
             } catch (e: Exception) {
-                logger.e(e) { "StartDiscovery failed, aborting scan" }
-                return@flow
+                if (e.message?.contains("InProgress") == true) {
+                    // BlueZ is already discovering (another concurrent scan, or a leftover from
+                    // one that didn't fully stop) - the outcome we actually want (an active
+                    // discovery) already holds, so proceed rather than abort the whole flow.
+                    logger.d { "StartDiscovery: already discovering, continuing" }
+                } else {
+                    logger.e(e) { "StartDiscovery failed, aborting scan" }
+                    return@flow
+                }
             }
             try {
                 var objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
