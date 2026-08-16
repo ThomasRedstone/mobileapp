@@ -20,6 +20,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.freedesktop.dbus.DBusPath
 import org.freedesktop.dbus.annotations.DBusInterfaceName
 import org.freedesktop.dbus.connections.impl.DBusConnection
+import org.freedesktop.dbus.exceptions.NotConnected
 import org.freedesktop.dbus.interfaces.DBusInterface
 import org.freedesktop.dbus.interfaces.ObjectManager
 import org.freedesktop.dbus.interfaces.Properties
@@ -287,7 +288,11 @@ actual class GattServer(
         } catch (e: Exception) {
             // Best-effort, matches the previous companion process's own DBusException swallow.
         }
-        conn.disconnect()
+        // The connection this is closing may already be dead (this is also the recovery path
+        // for a NotConnected sendData()) - disconnect() throwing there must not stop connection
+        // from being nulled out below, or GattServerManager's close() never completes and the
+        // server can never rebuild.
+        runCatching { conn.disconnect() }
         connection = null
     }
 
@@ -323,6 +328,14 @@ actual class GattServer(
                 Properties.PropertiesChanged(char.path, "org.bluez.GattCharacteristic1", mapOf("Value" to Variant(data)), emptyList())
             )
             SendResult.Success
+        } catch (e: NotConnected) {
+            // This connection is never coming back (confirmed live elsewhere this session -
+            // see SelfHealingSystemBusConnection's doc comment), and when it dies BlueZ
+            // unregisters the whole GATT application with it - every subsequent send would just
+            // repeat this failure forever. RestartRequired makes GattServerManager tear down and
+            // let the next registerDevice() rebuild the connection and re-RegisterApplication.
+            logger.e(e) { "GATT server connection dead - requesting restart" }
+            SendResult.RestartRequired
         } catch (e: Exception) {
             logger.e(e) { "error sending notify" }
             SendResult.Failed
