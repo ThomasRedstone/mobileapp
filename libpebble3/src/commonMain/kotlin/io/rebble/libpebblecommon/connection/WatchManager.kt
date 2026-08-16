@@ -53,6 +53,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** Everything that is persisted, not including fields that are duplicated elsewhere (e.g. goal) */
@@ -620,6 +621,14 @@ class WatchManager(
                         logger.i("Device connecting too soon after init: delaying to make sure we were really disconnected")
                         delay(APP_START_WAIT_TO_CONNECT)
                     }
+                    val failureBackoff = reconnectBackoff(device.connectionFailureInfo?.times ?: 0)
+                    if (failureBackoff > Duration.ZERO) {
+                        // Unthrottled retry after a real failure just hammers the watch's radio
+                        // (every attempt makes it wake and respond, win or lose) - confirmed live
+                        // as a real battery drain, not just a testing nuisance.
+                        logger.i { "Backing off $failureBackoff before retry (failure #${device.connectionFailureInfo?.times})" }
+                        delay(failureBackoff)
+                    }
                     pebbleConnector.connect(
                         knownWatchProperties = device.knownWatchProps,
                         lastError = device.connectionFailureInfo?.reason,
@@ -644,6 +653,16 @@ class WatchManager(
             }
             watch.copy(activeConnection = connectionKoinScope)
         }
+    }
+
+    // Tiered backoff on repeated connection failures, matching rockworkd's proven approach for
+    // the same watch/BlueZ combination - unthrottled retry just hammers the watch's BLE radio.
+    private fun reconnectBackoff(failureCount: Int): Duration = when {
+        failureCount <= 1 -> Duration.ZERO
+        failureCount <= 3 -> 5.seconds
+        failureCount <= 6 -> 15.seconds
+        failureCount <= 10 -> 30.seconds
+        else -> 60.seconds
     }
 
     private fun Watch.updateFailureReason(newReason: ConnectionFailureReason?) {
