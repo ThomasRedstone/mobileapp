@@ -192,6 +192,7 @@ class Locker(
     override suspend fun addAppToLocker(app: io.rebble.libpebblecommon.web.LockerEntry) {
         val orderIndex = orderIndexForInsert(AppType.fromString(app.type) ?: AppType.Watchface)
         lockerEntryDao.insertOrReplaceAndOrder(app.asEntity(orderIndex), config.value.lockerSyncLimitV2)
+        prefetchUncachedApps()
     }
 
     override suspend fun addAppsToLocker(apps: List<io.rebble.libpebblecommon.web.LockerEntry>) {
@@ -199,6 +200,29 @@ class Locker(
             val orderIndex = orderIndexForInsert(AppType.fromString(app.type) ?: AppType.Watchface)
             app.asEntity(orderIndex)
         }, config.value.lockerSyncLimitV2)
+        prefetchUncachedApps()
+    }
+
+    /**
+     * Downloads any locker app that isn't cached on disk yet, so installing it later doesn't
+     * need a network connection at that point - getPBWFileForApp() itself is a cheap no-op for
+     * anything already cached, so this is safe to call after every locker mutation. Runs
+     * sequentially in the background rather than in parallel, to avoid hammering the appstore
+     * with a burst of concurrent downloads after a large sync.
+     */
+    private fun prefetchUncachedApps() {
+        libPebbleCoroutineScope.launch {
+            val entries = lockerEntryDao.getAll().filter { !it.systemApp }
+            entries.forEach { entry ->
+                try {
+                    lockerPBWCache.getPBWFileForApp(entry.id, entry.version, this@Locker)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.w(e) { "prefetch failed for app ${entry.id}" }
+                }
+            }
+        }
     }
 
     suspend fun getApp(uuid: Uuid): LockerEntry? = lockerEntryDao.getEntry(uuid)
@@ -243,6 +267,7 @@ class Locker(
         lockerEntryDao.markAllForDeletion(toDelete)
         timelinePinDao.markAllForDeletionByParentIdsWithReminders(toDelete, timelineReminderDao)
         performCacheCleanup()
+        prefetchUncachedApps()
     }
 
     /**
@@ -558,10 +583,6 @@ abstract class LockerPBWCache(private val context: AppContext) {
         migrateFromLegacyIfNeeded(context)
     }
 
-    companion object {
-        const val DEFAULT_STORAGE_LIMIT_BYTES = 50L * 1024 * 1024 // 50 MB
-    }
-
     private fun migrateFromLegacyIfNeeded(context: AppContext) {
         val legacyDir = getLockerPBWCacheLegacyDirectory(context) ?: return
         migrateFiles(from = legacyDir, to = cacheDir)
@@ -598,33 +619,24 @@ abstract class LockerPBWCache(private val context: AppContext) {
     }
 
     /**
-     * Removes cached PBW files for store apps to stay within the storage limit.
-     * Sideloaded apps are NEVER deleted (they can't be re-fetched).
-     * [allEntries] should include all locker entries.
-     * [storageLimitBytes] total size limit for the pbw cache directory.
+     * Removes cached PBW files that no longer belong to any locker entry. Everything currently
+     * in the locker - sideloaded or not - is kept regardless of total cache size: the whole
+     * point of prefetching is that an app the user owns stays available offline, so a size-based
+     * eviction that could silently un-cache it would defeat that guarantee. [allEntries] should
+     * include all current locker entries (including sideloaded ones).
      */
-    fun cleanupCache(allEntries: List<LockerEntryRealDao.DbAppBasicProperties>, storageLimitBytes: Long = DEFAULT_STORAGE_LIMIT_BYTES) {
+    fun cleanupCache(allEntries: List<LockerEntryRealDao.DbAppBasicProperties>) {
         if (!SystemFileSystem.exists(cacheDir)) return
+        val validIds = allEntries.map { it.id.toString() }.toSet()
         val allFiles = SystemFileSystem.list(cacheDir)
             .filter { SystemFileSystem.metadataOrNull(it)?.isRegularFile == true }
-        val totalSize = allFiles.sumOf { SystemFileSystem.metadataOrNull(it)?.size ?: 0L }
-        if (totalSize <= storageLimitBytes) return
-        val deletable = allEntries
-            .filter { !it.sideloaded }
-            .sortedByDescending { it.orderIndex }
-            .map { it.id.toString() }
-        var bytesFreed = 0L
-        val needed = totalSize - storageLimitBytes
-        for (appIdStr in deletable) {
-            if (bytesFreed >= needed) break
-            allFiles.forEach { file ->
-                if (file.name.startsWith(appIdStr)) {
-                    bytesFreed += SystemFileSystem.metadataOrNull(file)?.size ?: 0L
-                    SystemFileSystem.delete(file)
-                    val pkjsFile = Path(pkjsCacheDir, "$appIdStr.js")
-                    if (SystemFileSystem.exists(pkjsFile)) {
-                        SystemFileSystem.delete(pkjsFile)
-                    }
+        allFiles.forEach { file ->
+            val appIdStr = file.name.substringBefore('_')
+            if (appIdStr !in validIds) {
+                SystemFileSystem.delete(file)
+                val pkjsFile = Path(pkjsCacheDir, "$appIdStr.js")
+                if (SystemFileSystem.exists(pkjsFile)) {
+                    SystemFileSystem.delete(pkjsFile)
                 }
             }
         }
