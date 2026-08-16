@@ -610,8 +610,14 @@ class WatchManager(
             // happen (e.g. bonding for 60 seconds), which otherwise would wait the entire 60
             // 60 seconds to finish, even after a disconnection.
             val disconnectDuringConnectionJob = connectionScope.launch {
-                pebbleConnector.disconnected.disconnected.await()
+                val reason = pebbleConnector.disconnected.disconnected.await()
                 logger.d("got disconnection (before connection)")
+                // Record the failure here rather than relying on the main connect() coroutine to
+                // do it after returning - cleanup() below cancels connectionScope, which races
+                // with (and usually wins against) that coroutine ever getting back to its own
+                // updateFailureReason() call, so unthrottled fast failures were never counted
+                // and never backed off.
+                device.updateFailureReason(reason)
                 connectionKoinScope.cleanup()
             }
 
