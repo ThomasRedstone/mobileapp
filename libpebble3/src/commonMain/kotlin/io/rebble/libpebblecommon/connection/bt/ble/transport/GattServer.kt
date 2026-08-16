@@ -25,7 +25,7 @@ enum class SendResult {
 }
 
 expect class GattServer {
-    suspend fun addServices()
+    suspend fun addServices(): Boolean
     suspend fun removeServices()
     suspend fun closeServer()
     val characteristicReadRequest: Flow<ServerCharacteristicReadRequest>
@@ -88,11 +88,13 @@ class GattServerManager(
         serverMutex.withLock {
             if (!servicesAdded) {
                 logger.d("adding forward-PPoG services for first registered device")
-                gs.addServices()
-                servicesAdded = true
+                servicesAdded = gs.addServices()
+                if (!servicesAdded) {
+                    logger.e { "addServices() failed - AppArmor GATT-server rule missing?" }
+                }
             }
         }
-        return true
+        return servicesAdded
     }
 
     fun unregisterDevice(identifier: PebbleBleIdentifier) {

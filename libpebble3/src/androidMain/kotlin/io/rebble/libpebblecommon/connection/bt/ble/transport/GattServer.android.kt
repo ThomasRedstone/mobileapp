@@ -244,7 +244,7 @@ actual class GattServer(
         }
     }
 
-    actual suspend fun addServices() {
+    actual suspend fun addServices(): Boolean {
         logger.d("addServices")
         addService(
             PPOGATT_DEVICE_SERVICE_UUID_SERVER, listOf(
@@ -277,6 +277,7 @@ actual class GattServer(
             )
         )
         logger.d("/addServices")
+        return true
     }
 
     private suspend fun addService(

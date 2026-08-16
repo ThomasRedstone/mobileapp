@@ -266,9 +266,12 @@ actual class GattServer(
         }
     }
 
-    actual suspend fun addServices() {
-        withTimeoutOrNull(10.seconds) { servicesAdded.await() }
-            ?: logger.w { "timed out waiting for gatt services to register" }
+    actual suspend fun addServices(): Boolean {
+        val registered = withTimeoutOrNull(10.seconds) { servicesAdded.await() } != null
+        if (!registered) {
+            logger.w { "timed out waiting for gatt services to register" }
+        }
+        return registered
     }
 
     actual suspend fun removeServices() {

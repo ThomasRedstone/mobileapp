@@ -136,7 +136,7 @@ actual class GattServer(
         (registeredServices[serviceUuid]?.characteristics as? List<CBMutableCharacteristic>)
             ?.firstOrNull { it.UUID.asUuid() == characteristicUuid }
 
-    actual suspend fun addServices() {
+    actual suspend fun addServices(): Boolean {
         addServicesMutex.withLock {
             logger.d("addServices: waiting for power on${if (wasRestoredFromKilledState) " (restored from killed state)" else ""}")
             peripheralManagerState.first { it == CBManagerStatePoweredOn }
@@ -170,6 +170,7 @@ actual class GattServer(
             )
             wasRestoredFromKilledState = false
         }
+        return true
     }
 
     private suspend fun addService(
