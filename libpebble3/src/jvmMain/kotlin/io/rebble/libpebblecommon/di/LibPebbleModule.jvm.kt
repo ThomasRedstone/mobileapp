@@ -101,6 +101,13 @@ actual val platformModule: Module = module {
             // busctl/dbus-python control BlueZ directly rather than through an OS
             // BLE stack with its own autoConnect/GATT-cache semantics.
             supportsGattAutoConnect = false,
+            // requestMtu()/getMtu() don't do real negotiation here (BlueZ only exposes the
+            // negotiated MTU via AcquireWrite/AcquireNotify, not implemented yet) - with this
+            // true, Mtu.update() drove the MTU StateFlow through 23 -> 339 -> 23 every connect
+            // (requestMtu() echoing the request, immediately overwritten by getMtu()'s hardcoded
+            // floor), and PPoG.updateMtu() throws on any decrease, causing an intermittent,
+            // timing-dependent connection failure whenever the transient 339 was observed.
+            useNativeMtu = false,
         )
     }
     singleOf(::JvmClassicScanner) bind ClassicScanner::class

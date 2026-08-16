@@ -332,8 +332,11 @@ class DbusConnectedGattClient(
     // BlueZ doesn't expose the negotiated ATT MTU without going through AcquireWrite/
     // AcquireNotify (not implemented here - StartNotify/WriteValue cover PPoG's needs). Falls
     // back to the un-negotiated default; real MTU negotiation is future work if throughput
-    // becomes a problem in practice.
-    override suspend fun requestMtu(mtu: Int): Int = mtu
+    // becomes a problem in practice. Returns the real (unchanged) value rather than echoing the
+    // request - callers must not assume a requested MTU actually took effect (BlePlatformConfig
+    // .useNativeMtu is false on this platform, so this isn't called in practice, but a caller
+    // that did call it directly deserves an honest answer, not a lie).
+    override suspend fun requestMtu(mtu: Int): Int = getMtu()
 
     override suspend fun getMtu(): Int = LEConstants.DEFAULT_MTU
 
