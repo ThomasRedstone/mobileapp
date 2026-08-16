@@ -270,9 +270,21 @@ class DbusConnectedGattClient(
             // rule on every unsubscribe.
             connection.addSigHandler(Properties.PropertiesChanged::class.java, characteristic, handler)
             if (startedNotify.add(path)) {
-                runCatching {
+                try {
                     characteristic.StartNotify()
-                }.onFailure { logger.e(it) { "StartNotify failed for $path" } }
+                } catch (e: Exception) {
+                    // A swallowed failure here used to leave the caller believing it was
+                    // subscribed (onSubscription still ran) - firing e.g. PpogClient's
+                    // ResetRequest into a link the watch's firmware will silently drop, since
+                    // the reversed client only exists after a real subscribe over encryption
+                    // (ppogatt_reversed_handle_subscribed). Closing the flow instead lets
+                    // PpogClient's cccdWritten.completeExceptionally path fire, same as its
+                    // existing Kable-throws-in-flow handling.
+                    logger.e(e) { "StartNotify failed for $path" }
+                    startedNotify.remove(path)
+                    close(e)
+                    return@callbackFlow
+                }
             }
             onSubscription?.invoke()
             awaitClose {
