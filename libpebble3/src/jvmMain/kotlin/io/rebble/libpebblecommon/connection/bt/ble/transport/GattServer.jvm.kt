@@ -16,6 +16,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.freedesktop.dbus.DBusPath
@@ -97,16 +99,19 @@ internal class ExportedCharacteristic(
     initialValue: ByteArray = ByteArray(0),
 ) : GattCharacteristic1Server, Properties {
     @Volatile var value: ByteArray = initialValue
-    @Volatile var notifying: Boolean = false
     var onReadRequested: (device: String) -> Unit = {}
     var onWrite: (device: String, value: ByteArray) -> Unit = { _, _ -> }
 
-    // Lets sendData() wait for the real StartNotify subscribe event instead of sending into a
+    // Lets sendData() wait for a real StartNotify subscribe event instead of sending into a
     // link the watch's firmware will silently drop before it exists - see StartNotify() below.
-    private val firstSubscribe = CompletableDeferred<Unit>()
+    // A StateFlow rather than a one-shot CompletableDeferred: these characteristic objects live
+    // as long as the GATT server (services are intentionally never removed), so every
+    // unsubscribe/resubscribe cycle - i.e. every reconnect - needs its own fresh wait, not just
+    // the very first one.
+    private val notifyingFlow = MutableStateFlow(false)
+    val notifying: Boolean get() = notifyingFlow.value
     suspend fun awaitNotifying() {
-        if (notifying) return
-        firstSubscribe.await()
+        notifyingFlow.first { it }
     }
 
     override fun getObjectPath() = path
@@ -129,13 +134,12 @@ internal class ExportedCharacteristic(
     // are addressed by writing directly to whichever device registerDevice() registered, not by
     // tracking subscribers here.
     override fun StartNotify() {
-        notifying = true
-        if (!firstSubscribe.isCompleted) firstSubscribe.complete(Unit)
+        notifyingFlow.value = true
         logger.d { "notify subscribed: $uuid" }
     }
 
     override fun StopNotify() {
-        notifying = false
+        notifyingFlow.value = false
         logger.d { "notify unsubscribed: $uuid" }
     }
 

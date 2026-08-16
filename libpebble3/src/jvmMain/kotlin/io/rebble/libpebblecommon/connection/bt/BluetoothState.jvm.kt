@@ -49,6 +49,12 @@ actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState
     var last: BluetoothState? = null
     var consecutiveFailures = 0
     lateinit var resubscribe: () -> Unit
+    // The adapter PropertiesChanged handler below fires on dbus-java's own signal-dispatch
+    // thread, while the poll loop runs on this coroutine's dispatcher - both call checkAndEmit(),
+    // which mutates connection/props/adapterPath/last/consecutiveFailures. Unsynchronized, that's
+    // a stale read or a doubled connection-rebuild race, not just a theoretical concern once both
+    // a live signal and a poll tick can land close together.
+    val stateLock = Any()
 
     fun currentState(): BluetoothState? {
         return try {
@@ -73,10 +79,12 @@ actual fun nativeBluetoothStateFlow(appContext: AppContext): Flow<BluetoothState
     }
 
     fun checkAndEmit() {
-        val state = currentState()
-        if (state != null && state != last) {
-            last = state
-            trySend(state)
+        synchronized(stateLock) {
+            val state = currentState()
+            if (state != null && state != last) {
+                last = state
+                trySend(state)
+            }
         }
     }
 

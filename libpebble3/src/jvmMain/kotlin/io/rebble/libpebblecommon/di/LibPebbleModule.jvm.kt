@@ -29,6 +29,7 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 import java.io.File
 import java.util.Properties
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Talks to BlueZ directly over D-Bus (DbusGattClient.jvm.kt) rather than through Kable: its
@@ -101,12 +102,13 @@ actual val platformModule: Module = module {
             // busctl/dbus-python control BlueZ directly rather than through an OS
             // BLE stack with its own autoConnect/GATT-cache semantics.
             supportsGattAutoConnect = false,
-            // requestMtu()/getMtu() don't do real negotiation here (BlueZ only exposes the
-            // negotiated MTU via AcquireWrite/AcquireNotify, not implemented yet) - with this
-            // true, Mtu.update() drove the MTU StateFlow through 23 -> 339 -> 23 every connect
+            // requestMtu()/getMtu() don't do real negotiation here - with this true,
+            // Mtu.update() drove the MTU StateFlow through 23 -> 339 -> 23 every connect
             // (requestMtu() echoing the request, immediately overwritten by getMtu()'s hardcoded
             // floor), and PPoG.updateMtu() throws on any decrease, causing an intermittent,
             // timing-dependent connection failure whenever the transient 339 was observed.
+            // getMtu() now reads the real negotiated MTU from BlueZ's GattCharacteristic1.MTU
+            // property instead of that hardcoded floor.
             useNativeMtu = false,
             // Nothing on this platform calls the equivalent of requestConnectionPriority, so
             // telling the watch's firmware to stop managing its own connection parameters (the
@@ -120,6 +122,10 @@ actual val platformModule: Module = module {
             // broken one. Fail the connect instead and let the normal retry loop re-run reversed
             // setup fresh.
             fallbackToForwardPpogOnReversedSetupFailure = false,
+            // Verified against this platform's firmware timing (5-6s ack timeout) - see
+            // BlePlatformConfig.resetRequestTimeout. Not yet soak-tested on Android/iOS, so this
+            // stays platform-scoped rather than changing the shared default.
+            resetRequestTimeout = 4.seconds,
         )
     }
     singleOf(::JvmClassicScanner) bind ClassicScanner::class

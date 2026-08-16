@@ -1,5 +1,17 @@
 # Phase 6 Handover: Confined GUI + real D-Bus BLE, state as of 2026-08-10 (session 4)
 
+> **2026-08-16 note:** the iteration loop below (`pm payload` against
+> `coreapp.tomredstone`) predates the current deploy flow, which drives everything through
+> `phone-fleet/manifest.yaml` (click + payload versions bumped together, applied by
+> `sync.sh`) — see `CLAUDE.md`'s "Android local release install" section's UT equivalent in
+> session history for the current ritual. Two payloads that started as ad hoc `pm payload`
+> pushes like the AppArmor one below are now permanent `phone-fleet` entries and survive a
+> device reflash: `coreapp-apparmor-patch` (this doc's AppArmor rule, still bumped in lockstep
+> with every `coreapp.thomasredstone` version) and `coreapp-lifecycle-exempt` (exempts the app
+> from Lomiri's background SIGSTOP via `com.canonical.qtmir lifecycle-exempt-appids` —
+> see `docs/ubuntu-touch-reliability-review.md` finding 2). Apply both the same way: sync
+> `phone-fleet`, don't hand-run the steps below.
+
 ## Session 4 update: the AppArmor wall is real, but it's not a dead end — it's patchable
 
 Session 3 (below) concluded local GATT server hosting was architecturally impossible under

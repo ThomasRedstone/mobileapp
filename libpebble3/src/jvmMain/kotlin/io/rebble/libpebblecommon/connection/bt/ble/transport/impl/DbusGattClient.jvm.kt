@@ -311,6 +311,10 @@ class DbusConnectedGattClient(
                     // existing Kable-throws-in-flow handling.
                     logger.e(e) { "StartNotify failed for $path" }
                     startedNotify.remove(path)
+                    // This early return skips awaitClose below entirely (the flow builder never
+                    // reaches it), so the handler registered just above must be torn down here
+                    // or it leaks along with its server-side match rule.
+                    connection.removeSigHandler(Properties.PropertiesChanged::class.java, characteristic, handler)
                     close(e)
                     return@callbackFlow
                 }

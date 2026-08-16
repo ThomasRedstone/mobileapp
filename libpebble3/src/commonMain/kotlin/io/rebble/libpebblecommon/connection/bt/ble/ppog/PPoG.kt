@@ -201,7 +201,7 @@ class PPoG(
         fun rescheduleTimeout() {
             cancelTimeout()
             timeoutJob = scope.launch {
-                delay(RESET_REQUEST_TIMEOUT)
+                delay(blePlatformConfig.resetRequestTimeout)
                 logger.w("Packet timeout")
                 onTimeout.send(Unit)
                 timeoutJob = null
@@ -338,13 +338,6 @@ class PPoG(
 private const val DATA_HEADER_OVERHEAD_BYTES = 1 + 3
 private const val MAX_SEQUENCE = 32
 private const val MAX_NUM_RETRIES = 2
-// Firmware acks within ~200ms normally and times out waiting for one after 5-6s (2 ticks of
-// PPOGATT_TIMEOUT_TICK_INTERVAL_SECS=2 x PPOGATT_TIMEOUT_TICKS=3), at which point it starts
-// resetting the session itself. The old 10s value meant the watch's own timeout always fired
-// first - the phone's retransmit was racing a session that was already being torn down. Now
-// comfortably under that window so the phone gets a real chance to resend before the watch
-// gives up.
-private val RESET_REQUEST_TIMEOUT = 4.seconds
 
 private data class PPoGConnectionParams(
     val rxWindow: Int,

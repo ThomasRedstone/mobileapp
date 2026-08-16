@@ -4,6 +4,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.DEFAULT_MT
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.MAX_RX_WINDOW
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.MAX_TX_WINDOW
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 data class BlePlatformConfig(
     val pinAddress: Boolean = true,
@@ -40,4 +41,12 @@ data class BlePlatformConfig(
      *  connect and letting the normal retry loop re-run reversed setup fresh is the better
      *  reaction. */
     val fallbackToForwardPpogOnReversedSetupFailure: Boolean = true,
+    /** How long the phone waits for a firmware ack before retransmitting a PPoG packet. Firmware
+     *  acks within ~200ms normally and times out waiting for one after 5-6s (2 ticks of
+     *  PPOGATT_TIMEOUT_TICK_INTERVAL_SECS=2 x PPOGATT_TIMEOUT_TICKS=3), at which point it starts
+     *  resetting the session itself - a phone-side value at or above that means the firmware's
+     *  own timeout always fires first, and the phone's retransmit races a session already being
+     *  torn down. Default kept at the original 10s pending mobile soak-testing of a shorter
+     *  value; set lower on platforms where it's been verified safe. */
+    val resetRequestTimeout: Duration = 10.seconds,
 )
