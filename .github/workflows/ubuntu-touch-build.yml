@@ -16,6 +16,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
       - name: Cache build deps
         uses: actions/cache@v4
         with:
