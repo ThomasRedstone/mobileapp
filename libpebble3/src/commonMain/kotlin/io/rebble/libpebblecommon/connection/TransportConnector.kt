@@ -63,6 +63,13 @@ enum class ConnectionFailureReason {
     CreateBondFailed,
     PairingTimedOut,
     NotAnError_NeverAttmpedConnection,
+    // A clean mid-session drop after a real connection was established, as opposed to
+    // FailedToConnect (never got that far) - lets logs tell "was up for an hour, then dropped"
+    // from "never connected". Safe to distinguish from FailedToConnect now that WatchManager's
+    // backoff counter (updateFailureReason) counts all failures uniformly regardless of reason -
+    // it used to reset on every reason change, so introducing a second reason here would have
+    // undone the backoff's escalation on a flapping connection.
+    Disconnected,
     TimeoutInitializingPpog,
     ClassicConnectionFailed,
     ClassicDisconnected,

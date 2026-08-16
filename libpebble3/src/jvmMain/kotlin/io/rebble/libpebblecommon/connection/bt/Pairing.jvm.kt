@@ -7,12 +7,15 @@ import io.rebble.libpebblecommon.connection.PebbleBtClassicIdentifier
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.ConnectivityWatcher
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_BONDED
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_NONE
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Adapter1
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Device1
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.SelfHealingSystemBusConnection
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.freedesktop.dbus.DBusPath
+import org.freedesktop.dbus.connections.impl.DBusConnection
 import org.freedesktop.dbus.interfaces.Properties
 import kotlin.time.Duration.Companion.seconds
 
@@ -23,6 +26,9 @@ import kotlin.time.Duration.Companion.seconds
  */
 private val logger = Logger.withTag("Pairing")
 private val POLL_INTERVAL = 1.seconds
+private const val ADAPTER_PATH = "/org/bluez/hci0"
+private const val REDISCOVER_TIMEOUT_MS = 15_000L
+private const val REDISCOVER_POLL_MS = 500L
 
 // Reused across calls rather than opened per poll - SASL handshake overhead per connection is
 // real, and DbusConnectedGattClient already establishes the same "one connection, many calls"
@@ -48,18 +54,55 @@ private fun isPaired(devicePath: String): Boolean = try {
 
 actual fun isBonded(identifier: PebbleBleIdentifier): Boolean = isPaired(devicePath(identifier))
 
+// After RemoveDevice(), BlueZ deletes the D-Bus object entirely - Pair() needs it to exist
+// again first. Confirmed live this session: an Obelix watch (DF:07:0A:D4:70:B8) reappeared via
+// StartDiscovery within a few seconds of being removed, for the just-unbonded case specifically
+// (this doesn't contradict "Obelix doesn't advertise to general discovery when disconnected" -
+// that's about an already-disconnected-but-still-bonded device, a different state).
+private fun waitForDeviceObject(connection: DBusConnection, path: String): Boolean {
+    val deadline = System.currentTimeMillis() + REDISCOVER_TIMEOUT_MS
+    while (System.currentTimeMillis() < deadline) {
+        try {
+            val props = connection.getRemoteObject("org.bluez", path, Properties::class.java)
+            if (props.Get<Any>("org.bluez.Device1", "Address") != null) return true
+        } catch (e: Exception) {
+            // Not there yet.
+        }
+        Thread.sleep(REDISCOVER_POLL_MS)
+    }
+    return false
+}
+
 actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
     logger.d("createBond()")
+    val path = devicePath(identifier)
     return try {
-        val device = connectionHolder.withConnection { connection ->
-            connection.getRemoteObject("org.bluez", devicePath(identifier), Device1::class.java)
-        }
         // Pair() blocks on its D-Bus reply until the human answers the watch's own pairing
-        // prompt - firing it on a background thread keeps createBond() itself non-blocking,
-        // matching every other platform (this only requests the bond; PebblePairing.kt already
-        // polls Paired separately with its own PENDING_BOND_TIMEOUT).
+        // prompt - firing everything on a background thread keeps createBond() itself
+        // non-blocking, matching every other platform (this only requests the bond;
+        // PebblePairing.kt already polls Paired separately with its own PENDING_BOND_TIMEOUT).
         Thread({
             try {
+                // Device1.Pair() on an already-Paired BlueZ device throws AlreadyExists and does
+                // nothing - exactly the case that gets us called in the first place (the watch
+                // reports paired but the link won't encrypt). Force a fresh pairing instead of
+                // silently no-op'ing.
+                if (isPaired(path)) {
+                    logger.d { "already marked Paired - removing device and rescanning to force a fresh pairing" }
+                    connectionHolder.withConnection { connection ->
+                        val adapter = connection.getRemoteObject("org.bluez", ADAPTER_PATH, Adapter1::class.java)
+                        runCatching { adapter.RemoveDevice(DBusPath(path)) }
+                        runCatching { adapter.StartDiscovery() }
+                        val found = waitForDeviceObject(connection, path)
+                        runCatching { adapter.StopDiscovery() }
+                        if (!found) {
+                            logger.w { "device object didn't reappear after RemoveDevice - Pair() will likely fail" }
+                        }
+                    }
+                }
+                val device = connectionHolder.withConnection { connection ->
+                    connection.getRemoteObject("org.bluez", path, Device1::class.java)
+                }
                 device.Pair()
             } catch (e: Exception) {
                 logger.e(e) { "Pair() failed" }

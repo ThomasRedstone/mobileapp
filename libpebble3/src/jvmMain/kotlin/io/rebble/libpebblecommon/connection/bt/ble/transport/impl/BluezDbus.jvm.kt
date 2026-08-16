@@ -86,6 +86,7 @@ internal class SelfHealingSystemBusConnection {
 internal interface Adapter1 : DBusInterface {
     fun StartDiscovery()
     fun StopDiscovery()
+    fun RemoveDevice(device: DBusPath)
 }
 
 @DBusInterfaceName("org.bluez.Device1")

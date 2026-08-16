@@ -679,11 +679,13 @@ class WatchManager(
         if (newReason != null) {
             val failureInfo = ConnectionFailureInfo(
                 reason = newReason,
-                times = if (connectionFailureInfo?.reason == newReason) {
-                    connectionFailureInfo.times + 1
-                } else {
-                    1
-                },
+                // Counts ALL consecutive failures/disconnects for backoff purposes, regardless
+                // of the specific reason - resetting on every reason change (the old behaviour)
+                // meant a flapping connection that alternates reasons (e.g. FailedToConnect and
+                // a genuine mid-session Disconnected) never escalated the backoff, recreating
+                // the exact battery-drain bug this counter exists to prevent, just via a
+                // different trigger. `reason` still reflects the latest failure for diagnostics.
+                times = (connectionFailureInfo?.times ?: 0) + 1,
             )
             updateWatch(identifier) {
                 it.copy(

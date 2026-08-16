@@ -71,6 +71,7 @@ class DbusGattConnector(
 
     private var connection: DBusConnection? = null
     private var attemptedConnection = false
+    private var connectedSuccessfully = false
 
     override suspend fun connect(): GattConnectionResult {
         val conn = try {
@@ -92,7 +93,34 @@ class DbusGattConnector(
                 val connectedNow = signal.propertiesChanged["Connected"]?.value as? Boolean
                 if (connectedNow == false && !_disconnected.isCompleted) {
                     logger.i { "Disconnection (PropertiesChanged Connected=false)" }
-                    _disconnected.complete(ConnectionFailureReason.FailedToConnect)
+                    val reason = if (connectedSuccessfully) {
+                        ConnectionFailureReason.Disconnected
+                    } else {
+                        ConnectionFailureReason.FailedToConnect
+                    }
+                    _disconnected.complete(reason)
+                }
+            },
+        )
+
+        // PropertiesChanged Connected=false only fires for a normal disconnect - if the device
+        // object itself vanishes instead (adapter power cycle, another process's RemoveDevice,
+        // bluetoothd restart), nothing above ever fires and the session zombies until the next
+        // write happens to fail. org.bluez.ObjectManager is effectively BlueZ-only on this bus,
+        // so the unscoped match rule here isn't the same broad-noise problem as an unscoped
+        // Properties.PropertiesChanged handler would be.
+        conn.addSigHandler(
+            ObjectManager.InterfacesRemoved::class.java,
+            DBusSigHandler { signal ->
+                if (signal.objectPath != devicePath || "org.bluez.Device1" !in signal.interfaces) return@DBusSigHandler
+                if (!_disconnected.isCompleted) {
+                    logger.i { "Disconnection (InterfacesRemoved $devicePath)" }
+                    val reason = if (connectedSuccessfully) {
+                        ConnectionFailureReason.Disconnected
+                    } else {
+                        ConnectionFailureReason.FailedToConnect
+                    }
+                    _disconnected.complete(reason)
                 }
             },
         )
@@ -125,6 +153,7 @@ class DbusGattConnector(
                 runCatching { device.Disconnect() }
                 failure(ConnectionFailureReason.ConnectTimeout)
             } else {
+                connectedSuccessfully = true
                 GattConnectionResult.Success(
                     DbusConnectedGattClient(identifier, conn, devicePath, blePlatformConfig)
                 )
