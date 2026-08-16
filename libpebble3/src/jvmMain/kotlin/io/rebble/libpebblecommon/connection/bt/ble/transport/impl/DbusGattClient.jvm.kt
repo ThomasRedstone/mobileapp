@@ -329,16 +329,29 @@ class DbusConnectedGattClient(
     override val services: List<GattService>?
         get() = discoveredServices
 
-    // BlueZ doesn't expose the negotiated ATT MTU without going through AcquireWrite/
-    // AcquireNotify (not implemented here - StartNotify/WriteValue cover PPoG's needs). Falls
-    // back to the un-negotiated default; real MTU negotiation is future work if throughput
-    // becomes a problem in practice. Returns the real (unchanged) value rather than echoing the
-    // request - callers must not assume a requested MTU actually took effect (BlePlatformConfig
-    // .useNativeMtu is false on this platform, so this isn't called in practice, but a caller
-    // that did call it directly deserves an honest answer, not a lie).
+    // BlePlatformConfig.useNativeMtu is false on this platform (see LibPebbleModule.jvm.kt), so
+    // this isn't called in practice - but a caller that did call it directly deserves an honest
+    // answer, not a lie about a request having taken effect.
     override suspend fun requestMtu(mtu: Int): Int = getMtu()
 
-    override suspend fun getMtu(): Int = LEConstants.DEFAULT_MTU
+    // BlueZ exposes the real negotiated ATT MTU as a property on any of the device's
+    // GattCharacteristic1 objects (same value everywhere - it's a per-connection property, not
+    // per-characteristic) rather than via requestMtu()/an explicit negotiation call. Falls back
+    // to the un-negotiated default if services haven't resolved yet or the read fails.
+    override suspend fun getMtu(): Int = try {
+        val objectManager = connection.getRemoteObject("org.bluez", "/", ObjectManager::class.java)
+        val anyCharPath = objectManager.GetManagedObjects().entries.firstOrNull { (path, ifaces) ->
+            path.path.startsWith("$devicePath/") && ifaces.containsKey("org.bluez.GattCharacteristic1")
+        }?.key?.path
+        val mtu = anyCharPath?.let {
+            val props = connection.getRemoteObject("org.bluez", it, Properties::class.java)
+            (props.Get<Any>("org.bluez.GattCharacteristic1", "MTU") as? Number)?.toInt()
+        }
+        mtu ?: LEConstants.DEFAULT_MTU
+    } catch (e: Exception) {
+        logger.w(e) { "couldn't read real MTU, falling back to default" }
+        LEConstants.DEFAULT_MTU
+    }
 
     override suspend fun refreshServicesNative(): Boolean = false
 
