@@ -4,6 +4,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.window.WindowExceptionHandler
 import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import co.touchlab.kermit.Logger
+import io.rebble.libpebblecommon.telemetry.DeviceTelemetry
 import java.awt.Window
 
 private val logger = Logger.withTag("UncaughtExceptions")
@@ -22,6 +23,10 @@ private val logger = Logger.withTag("UncaughtExceptions")
 object LoggingWindowExceptionHandlerFactory : WindowExceptionHandlerFactory {
     override fun exceptionHandler(window: Window) = WindowExceptionHandler { throwable ->
         logger.e(throwable) { "Uncaught exception in window composition or event handling" }
+        DeviceTelemetry.event(
+            eventKind = "crash.window",
+            message = throwable::class.qualifiedName ?: "unknown exception in window composition",
+        )
     }
 }
 
@@ -36,5 +41,10 @@ object LoggingWindowExceptionHandlerFactory : WindowExceptionHandlerFactory {
 fun installUncaughtExceptionLogging() {
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         logger.e(throwable) { "Unhandled exception in thread ${thread.name}" }
+        DeviceTelemetry.event(
+            eventKind = "crash.uncaught",
+            message = throwable::class.qualifiedName ?: "unknown exception",
+            attributes = mapOf("thread.name" to thread.name),
+        )
     }
 }

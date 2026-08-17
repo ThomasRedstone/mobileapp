@@ -13,6 +13,7 @@ import io.rebble.libpebblecommon.connection.bt.ble.transport.GattDescriptor
 import io.rebble.libpebblecommon.connection.bt.ble.transport.GattService
 import io.rebble.libpebblecommon.connection.bt.ble.transport.GattWriteType
 import io.rebble.libpebblecommon.di.ConnectionCoroutineScope
+import io.rebble.libpebblecommon.telemetry.DeviceTelemetry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.channels.awaitClose
@@ -73,6 +74,17 @@ class DbusGattConnector(
     private var connectedSuccessfully = false
 
     override suspend fun connect(): GattConnectionResult {
+        val startMs = System.currentTimeMillis()
+        val result = doConnect()
+        DeviceTelemetry.event(
+            eventKind = if (result is GattConnectionResult.Success) "ble.connect.success" else "ble.connect.failure",
+            message = "BLE connect handshake (device Connect() through GATT ServicesResolved)",
+            durationMs = System.currentTimeMillis() - startMs,
+        )
+        return result
+    }
+
+    private suspend fun doConnect(): GattConnectionResult {
         val conn = try {
             buildSystemBusConnection()
         } catch (e: DBusException) {

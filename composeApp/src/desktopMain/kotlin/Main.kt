@@ -21,6 +21,11 @@ import coredevices.coreapp.util.initLogging
 import coredevices.pebble.PebbleAppDelegate
 import coredevices.pebble.watchModule
 import coredevices.util.AppDirs
+import io.rebble.libpebblecommon.ErrorTracker
+import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
+import io.rebble.libpebblecommon.telemetry.DeviceTelemetry
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import java.io.RandomAccessFile
@@ -66,9 +71,33 @@ internal fun initCoreapp() {
     initLogging()
     installUncaughtExceptionLogging()
     initializeFirebase()
+    initDeviceTelemetry(errorTracker = koinApp.koin.get(), scope = koinApp.koin.get())
     // Android's MainApplication.onCreate() is the only other place this gets called - nothing
     // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
     koinApp.koin.get<PebbleAppDelegate>().init()
+}
+
+// lomiri-app-launch sets APP_ID to "<package>_<hook>_<version>" (e.g.
+// "coreapp.thomasredstone_coreapp_0.1.62") for every click it starts - confirmed live via
+// /proc/<pid>/environ - so the version this build actually is can be read at runtime instead of
+// hand-maintaining a second copy of ubuntuTouchApp/manifest.json's version. Absent outside a
+// click launch (a plain desktop dev run), hence the fallback.
+private fun appVersionFromEnv(): String =
+    System.getenv("APP_ID")?.substringAfterLast('_') ?: "unknown"
+
+// See ~/own/ut/ut-telemetry-broker.md. service.name is a fixed literal, not derived from APP_ID -
+// the contract requires it stable forever regardless of how the click happens to be packaged.
+private fun initDeviceTelemetry(errorTracker: ErrorTracker, scope: LibPebbleCoroutineScope) {
+    DeviceTelemetry.init(serviceName = "coreapp", serviceVersion = appVersionFromEnv())
+    DeviceTelemetry.event(eventKind = "app.start", message = "coreapp started")
+    errorTracker.userFacingErrors
+        .onEach { error ->
+            DeviceTelemetry.event(
+                eventKind = "error.${error::class.simpleName}",
+                message = error.message,
+            )
+        }
+        .launchIn(scope)
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
