@@ -1,11 +1,9 @@
 package io.rebble.libpebblecommon.telemetry
 
 import co.touchlab.kermit.Logger
+import java.net.HttpURLConnection
 import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 
 /**
@@ -17,13 +15,17 @@ import java.util.concurrent.Executors
  *
  * A dead or absent broker must cost the app nothing (rule 1 of the contract): every send runs
  * on its own single-thread daemon executor with a short connect+request timeout, and every
- * failure - connection refused, timeout, anything - is swallowed. No dependency beyond the JDK's
- * own HttpClient, matching the contract's preference for a small, dependency-free integration
- * over pulling in a full OTel SDK.
+ * failure - connection refused, timeout, anything - is swallowed. Uses the old
+ * `java.net.HttpURLConnection` rather than `java.net.http.HttpClient`: the latter lives in the
+ * `java.net.http` JPMS module, which isn't in this app's jlink-trimmed runtime image
+ * (composeApp/build.gradle.kts's `nativeDistributions.modules(...)`) and threw
+ * NoClassDefFoundError at startup on-device (confirmed live, 0.1.64) - HttpURLConnection is
+ * `java.base`, always present, and a closer match to the contract's "dependency-free" reference
+ * implementation anyway.
  */
 object DeviceTelemetry {
     private const val ENDPOINT = "http://127.0.0.1:4318/v1/logs"
-    private val TIMEOUT: Duration = Duration.ofSeconds(2)
+    private const val TIMEOUT_MS = 2_000
 
     private val logger = Logger.withTag("DeviceTelemetry")
 
@@ -32,10 +34,6 @@ object DeviceTelemetry {
 
     @Volatile
     private var serviceVersion: String = "unknown"
-
-    private val client: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(TIMEOUT)
-        .build()
 
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "device-telemetry").apply { isDaemon = true }
@@ -90,15 +88,22 @@ object DeviceTelemetry {
         durationMs: Long?,
     ) {
         val body = buildPayload(service, version, eventKind, message, attributes, durationMs)
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(ENDPOINT))
-            .timeout(TIMEOUT)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build()
-        // Acceptance (a 200) only means the broker spooled it, not that it reached ClickHouse -
-        // nothing useful to do with the response either way, so it's discarded rather than read.
-        client.send(request, HttpResponse.BodyHandlers.discarding())
+            .toByteArray(StandardCharsets.UTF_8)
+        val connection = URI.create(ENDPOINT).toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = TIMEOUT_MS
+            connection.readTimeout = TIMEOUT_MS
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.outputStream.use { it.write(body) }
+            // Acceptance (a 200) only means the broker spooled it, not that it reached
+            // ClickHouse - nothing useful to do with the response either way, but the status
+            // still has to be read to let the connection complete/release cleanly.
+            connection.responseCode
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun buildPayload(
