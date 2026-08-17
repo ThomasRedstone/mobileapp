@@ -16,6 +16,7 @@ import io.rebble.libpebblecommon.calls.SystemCallLog
 import io.rebble.libpebblecommon.connection.LibPebble
 import io.rebble.libpebblecommon.connection.OtherPebbleApp
 import io.rebble.libpebblecommon.connection.OtherPebbleApps
+import io.rebble.libpebblecommon.connection.endpointmanager.musiccontrol.MusicTrack
 import io.rebble.libpebblecommon.connection.endpointmanager.timeline.PlatformNotificationActionHandler
 import io.rebble.libpebblecommon.contacts.SystemContact
 import io.rebble.libpebblecommon.contacts.SystemContacts
@@ -23,7 +24,10 @@ import io.rebble.libpebblecommon.database.entity.BaseAction
 import io.rebble.libpebblecommon.database.entity.CalendarEntity
 import io.rebble.libpebblecommon.database.entity.TimelinePin
 import io.rebble.libpebblecommon.database.entity.buildTimelineNotification
+import io.rebble.libpebblecommon.music.PlaybackState
 import io.rebble.libpebblecommon.music.PlaybackStatus
+import io.rebble.libpebblecommon.music.PlayerInfo
+import io.rebble.libpebblecommon.music.RepeatType
 import io.rebble.libpebblecommon.music.SystemMusicControl
 import io.rebble.libpebblecommon.notification.NotificationAppsSync
 import io.rebble.libpebblecommon.notification.NotificationListenerConnection
@@ -36,15 +40,24 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.freedesktop.dbus.connections.impl.DBusConnection
+import org.freedesktop.dbus.interfaces.DBus
 import org.freedesktop.dbus.interfaces.DBusSigHandler
+import org.freedesktop.dbus.interfaces.Properties
+import org.freedesktop.dbus.types.Variant
 import java.time.format.DateTimeParseException
+import kotlin.math.roundToInt
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -52,11 +65,12 @@ import kotlin.uuid.Uuid
 
 /**
  * No-op stand-ins for phone-integration features (calendar, calls, contacts,
- * music, geolocation, notifications) that have no meaningful equivalent on a
- * Linux desktop JVM target — this platform's whole point is the BLE
- * connection to the watch, not replicating Android/iOS's OS integrations.
- * Each returns "no data"/"no permission" rather than throwing, so the shared
- * code that calls them degrades gracefully instead of crashing.
+ * geolocation, notifications) that have no meaningful equivalent on a Linux
+ * desktop JVM target — this platform's whole point is the BLE connection to
+ * the watch, not replicating Android/iOS's OS integrations. Each returns "no
+ * data"/"no permission" rather than throwing, so the shared code that calls
+ * them degrades gracefully instead of crashing. Music control is the one
+ * exception - see [LinuxSystemMusicControl] below, backed by MPRIS.
  */
 
 class LinuxSystemCalendar : SystemCalendar {
@@ -164,15 +178,151 @@ class LinuxLegacyPhoneReceiver : LegacyPhoneReceiver {
     override fun init(currentCall: MutableStateFlow<Call?>) {}
 }
 
-class LinuxSystemMusicControl : SystemMusicControl {
-    override fun play() {}
-    override fun pause() {}
-    override fun playPause() {}
-    override fun nextTrack() {}
-    override fun previousTrack() {}
-    override fun volumeDown() {}
-    override fun volumeUp() {}
-    override val playbackState: StateFlow<PlaybackStatus?> = MutableStateFlow(null)
+/**
+ * Backed by MPRIS (`org.mpris.MediaPlayer2.*`) over the session bus - see MprisDbus.jvm.kt.
+ * Unlike `HistoryService`/`NotificationBridge1`, an MPRIS player's bus name isn't fixed (it's
+ * `org.mpris.MediaPlayer2.<app>`, possibly with a `.instanceN` suffix for multiple players), so
+ * it's discovered via `org.freedesktop.DBus.ListNames`/`NameOwnerChanged` rather than assumed.
+ * Prefers Sonic Player (this fleet's only real MPRIS server today) when present, falls back to
+ * any other player found.
+ */
+class LinuxSystemMusicControl(
+    private val sessionBus: DBusConnection,
+    private val libPebbleCoroutineScope: LibPebbleCoroutineScope,
+) : SystemMusicControl {
+    private val logger = Logger.withTag("LinuxSystemMusicControl")
+
+    private val activePlayerBusName: Flow<String?> = callbackFlow {
+        val busDriver = sessionBus.getRemoteObject("org.freedesktop.DBus", "/org/freedesktop/DBus", DBus::class.java)
+        var current: String? = null
+
+        fun refresh() {
+            val names = runCatching {
+                busDriver.ListNames().filter { it.startsWith(MPRIS_BUS_PREFIX) }
+            }.getOrDefault(emptyList())
+            val chosen = names.firstOrNull { it == PREFERRED_BUS_NAME } ?: names.firstOrNull()
+            if (chosen != current) {
+                current = chosen
+                trySend(chosen)
+            }
+        }
+        refresh()
+
+        val handler = DBusSigHandler<DBus.NameOwnerChanged> { signal ->
+            if (signal.name.startsWith(MPRIS_BUS_PREFIX)) refresh()
+        }
+        runCatching { sessionBus.addSigHandler(DBus.NameOwnerChanged::class.java, handler) }
+            .onFailure { logger.w(it) { "couldn't subscribe to NameOwnerChanged - MPRIS players appearing/disappearing won't be picked up live" } }
+        awaitClose {
+            runCatching { sessionBus.removeSigHandler(DBus.NameOwnerChanged::class.java, handler) }
+        }
+    }
+
+    override val playbackState: StateFlow<PlaybackStatus?> = activePlayerBusName
+        .flatMapLatest { busName -> busName?.let { playerStateFlow(it) } ?: flowOf(null) }
+        .stateIn(libPebbleCoroutineScope, SharingStarted.Eagerly, null)
+
+    /** Live state for one specific MPRIS player, re-read on every `PropertiesChanged` signal from
+     *  its `Player` interface. Re-subscribed by [activePlayerBusName] whenever the tracked player
+     *  changes - `flatMapLatest` cancels the previous player's subscription automatically. */
+    private fun playerStateFlow(busName: String): Flow<PlaybackStatus?> = callbackFlow {
+        trySend(readState(busName))
+        val playerProxy = sessionBus.getRemoteObject(busName, MPRIS_OBJECT_PATH, MprisPlayer::class.java)
+        val handler = DBusSigHandler<Properties.PropertiesChanged> { signal ->
+            if (signal.interfaceName == MPRIS_PLAYER_INTERFACE) trySend(readState(busName))
+        }
+        runCatching { sessionBus.addSigHandler(Properties.PropertiesChanged::class.java, playerProxy, handler) }
+            .onFailure { logger.w(it) { "couldn't subscribe to $busName PropertiesChanged" } }
+        awaitClose {
+            runCatching { sessionBus.removeSigHandler(Properties.PropertiesChanged::class.java, playerProxy, handler) }
+        }
+    }
+
+    private fun readState(busName: String): PlaybackStatus? = try {
+        val props = sessionBus.getRemoteObject(busName, MPRIS_OBJECT_PATH, Properties::class.java)
+        val playerProps = props.GetAll(MPRIS_PLAYER_INTERFACE)
+        val identity = runCatching { props.Get<String>(MPRIS_ROOT_INTERFACE, "Identity") }.getOrNull()
+        @Suppress("UNCHECKED_CAST")
+        val metadata = playerProps["Metadata"]?.value as? Map<String, Variant<*>> ?: emptyMap()
+        val volumeFraction = (playerProps["Volume"]?.value as? Number)?.toDouble() ?: 1.0
+        PlaybackStatus(
+            playerInfo = PlayerInfo(
+                packageId = busName,
+                name = identity ?: busName.removePrefix(MPRIS_BUS_PREFIX),
+            ),
+            playbackState = when (playerProps.mprisString("PlaybackStatus")) {
+                "Playing" -> PlaybackState.Playing
+                else -> PlaybackState.Paused
+            },
+            currentTrack = metadata.takeIf { it.isNotEmpty() }?.let {
+                MusicTrack(
+                    title = it.mprisString("xesam:title"),
+                    artist = it.mprisArtist(),
+                    album = it.mprisString("xesam:album"),
+                    length = (it.mprisLong("mpris:length") ?: 0L).microseconds,
+                    trackNumber = it.mprisInt("xesam:trackNumber"),
+                )
+            },
+            // MPRIS doesn't require Position to notify via PropertiesChanged (players can update
+            // it many times a second) - this is a snapshot at read time, not live-ticking.
+            playbackPositionMs = (playerProps.mprisLong("Position") ?: 0L) / 1000,
+            playbackRate = (playerProps["Rate"]?.value as? Number)?.toFloat() ?: 1f,
+            shuffle = playerProps["Shuffle"]?.value as? Boolean ?: false,
+            repeat = when (playerProps.mprisString("LoopStatus")) {
+                "Track" -> RepeatType.One
+                "Playlist" -> RepeatType.All
+                else -> RepeatType.Off
+            },
+            volume = (volumeFraction * 100).roundToInt().coerceIn(0, 100),
+        )
+    } catch (e: Exception) {
+        logger.w(e) { "Couldn't read MPRIS state from $busName" }
+        null
+    }
+
+    private fun withPlayer(block: (MprisPlayer) -> Unit) {
+        val busName = playbackState.value?.playerInfo?.packageId ?: run {
+            logger.d { "No MPRIS player available" }
+            return
+        }
+        libPebbleCoroutineScope.launch {
+            try {
+                block(sessionBus.getRemoteObject(busName, MPRIS_OBJECT_PATH, MprisPlayer::class.java))
+            } catch (e: Exception) {
+                logger.w(e) { "MPRIS call to $busName failed" }
+            }
+        }
+    }
+
+    override fun play() = withPlayer { it.Play() }
+    override fun pause() = withPlayer { it.Pause() }
+    override fun playPause() = withPlayer { it.PlayPause() }
+    override fun nextTrack() = withPlayer { it.Next() }
+    override fun previousTrack() = withPlayer { it.Previous() }
+    override fun volumeUp() = adjustVolume(VOLUME_STEP)
+    override fun volumeDown() = adjustVolume(-VOLUME_STEP)
+
+    private fun adjustVolume(delta: Double) {
+        val busName = playbackState.value?.playerInfo?.packageId ?: return
+        libPebbleCoroutineScope.launch {
+            try {
+                val props = sessionBus.getRemoteObject(busName, MPRIS_OBJECT_PATH, Properties::class.java)
+                val current = (props.Get<Any>(MPRIS_PLAYER_INTERFACE, "Volume") as? Number)?.toDouble() ?: 1.0
+                props.Set(MPRIS_PLAYER_INTERFACE, "Volume", (current + delta).coerceIn(0.0, 1.0))
+            } catch (e: Exception) {
+                logger.w(e) { "Couldn't change volume on $busName" }
+            }
+        }
+    }
+
+    private companion object {
+        const val MPRIS_BUS_PREFIX = "org.mpris.MediaPlayer2."
+        const val PREFERRED_BUS_NAME = "org.mpris.MediaPlayer2.sonicplayer"
+        const val MPRIS_OBJECT_PATH = "/org/mpris/MediaPlayer2"
+        const val MPRIS_ROOT_INTERFACE = "org.mpris.MediaPlayer2"
+        const val MPRIS_PLAYER_INTERFACE = "org.mpris.MediaPlayer2.Player"
+        const val VOLUME_STEP = 0.1
+    }
 }
 
 class LinuxSystemGeolocation : SystemGeolocation {
