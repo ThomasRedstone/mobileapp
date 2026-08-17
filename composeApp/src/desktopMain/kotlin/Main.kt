@@ -21,11 +21,9 @@ import coredevices.coreapp.util.initLogging
 import coredevices.pebble.PebbleAppDelegate
 import coredevices.pebble.watchModule
 import coredevices.util.AppDirs
-import io.rebble.libpebblecommon.ErrorTracker
-import io.rebble.libpebblecommon.di.LibPebbleCoroutineScope
+import io.rebble.libpebblecommon.connection.LibPebble
 import io.rebble.libpebblecommon.telemetry.DeviceTelemetry
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import java.io.RandomAccessFile
@@ -71,10 +69,18 @@ internal fun initCoreapp() {
     initLogging()
     installUncaughtExceptionLogging()
     initializeFirebase()
-    initDeviceTelemetry(errorTracker = koinApp.koin.get(), scope = koinApp.koin.get())
+    DeviceTelemetry.init(serviceName = "coreapp", serviceVersion = appVersionFromEnv())
+    DeviceTelemetry.event(eventKind = "app.start", message = "coreapp started")
     // Android's MainApplication.onCreate() is the only other place this gets called - nothing
     // else drives it, so without this LibPebble/GATT server/Bluetooth state never initialize.
     koinApp.koin.get<PebbleAppDelegate>().init()
+    // LibPebble3.create() (inside watchModule's single) builds its own internal Koin instance,
+    // separate from koinApp above - ErrorTracker lives only in that inner graph, unreachable via
+    // koinApp.koin.get() directly (confirmed live: NoDefinitionFoundException). LibPebble itself
+    // is the one thing from that inner graph koinApp does expose (watchModule binds it), and it
+    // implements Errors, so this reaches the same event stream without depending on koinApp
+    // resolving LibPebble earlier than PebbleAppDelegate.init() already does today.
+    forwardErrorsToTelemetry(koinApp.koin.get())
 }
 
 // lomiri-app-launch sets APP_ID to "<package>_<hook>_<version>" (e.g.
@@ -85,19 +91,19 @@ internal fun initCoreapp() {
 private fun appVersionFromEnv(): String =
     System.getenv("APP_ID")?.substringAfterLast('_') ?: "unknown"
 
-// See ~/own/ut/ut-telemetry-broker.md. service.name is a fixed literal, not derived from APP_ID -
-// the contract requires it stable forever regardless of how the click happens to be packaged.
-private fun initDeviceTelemetry(errorTracker: ErrorTracker, scope: LibPebbleCoroutineScope) {
-    DeviceTelemetry.init(serviceName = "coreapp", serviceVersion = appVersionFromEnv())
-    DeviceTelemetry.event(eventKind = "app.start", message = "coreapp started")
-    errorTracker.userFacingErrors
-        .onEach { error ->
+// See ~/own/ut/ut-telemetry-broker.md. GlobalScope matches this codebase's own existing pattern
+// for an app-lifetime background collector (PebbleAppDelegate.init() uses the same thing) -
+// LibPebbleCoroutineScope isn't an option here for the same inner-Koin-instance reason noted
+// above.
+private fun forwardErrorsToTelemetry(libPebble: LibPebble) {
+    kotlinx.coroutines.GlobalScope.launch {
+        libPebble.userFacingErrors.collect { error ->
             DeviceTelemetry.event(
                 eventKind = "error.${error::class.simpleName}",
                 message = error.message,
             )
         }
-        .launchIn(scope)
+    }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
