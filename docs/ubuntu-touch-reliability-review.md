@@ -361,3 +361,14 @@ checking first next time: whether this is reproducible from a clean bluetoothd r
 "resource exhaustion after N attempts" vs. "something about this specific device's BlueZ-side
 state"), and whether `hcitool con`/`bluetoothctl info` show a phantom/stuck connection state for
 this device's object at the point of failure.
+
+**Confirmed live, same session**: `sudo systemctl restart bluetooth` immediately unstuck it — the
+very next reconnect attempt after the restart connected cleanly (real `GetManagedObjects` service
+list, MTU negotiated to 256, `encrypted = true`), no `le-connection-abort-by-local` at all. This
+is a real, workable mitigation (not yet a fix) and supports "`bluetoothd`-side resource/state
+exhaustion after N attempts against the same device" as the leading theory over "something wrong
+with this device's BlueZ object specifically" — a restart doesn't touch per-device state, only
+`bluetoothd`'s own process. That same reconnect then hit the **pre-existing, already-documented**
+forward-path PPoG timeout (finding 5 above) on its own — i.e. tonight's new issue and the
+already-known PPoG issue are cleanly separable and this confirms the abort-loop finding doesn't
+also explain the PPoG one.
