@@ -52,6 +52,37 @@ internal interface GattManager1 : DBusInterface {
     fun UnregisterApplication(application: DBusPath)
 }
 
+@DBusInterfaceName("org.bluez.LEAdvertisingManager1")
+internal interface LEAdvertisingManager1 : DBusInterface {
+    fun RegisterAdvertisement(advertisement: DBusPath, options: Map<String, Variant<*>>)
+    fun UnregisterAdvertisement(advertisement: DBusPath)
+}
+
+@DBusInterfaceName("org.bluez.LEAdvertisement1")
+internal interface LEAdvertisement1 : DBusInterface {
+    fun Release()
+}
+
+// Every connection to the watch is phone-initiated (Device1.Connect(), central role only) - this
+// app never actually needs to be discoverable. Registered anyway, purely because bluetoothd
+// appears to only merge a RegisterApplication'd local GATT database into what it serves to a
+// peer while the adapter is also in an active peripheral/advertising role - confirmed live via a
+// btmon capture showing bluetoothd answer the watch's own service discovery with Attribute Not
+// Found for our service, despite RegisterApplication succeeding
+// (docs/ubuntu-touch-reliability-review.md, 2026-08-18 addendum). Content is irrelevant; only
+// having something actively registered is the point.
+internal class ExportedAdvertisement(private val path: String) : LEAdvertisement1, Properties {
+    override fun getObjectPath() = path
+    override fun Release() {}
+    override fun <A> Get(interfaceName: String, property: String): A =
+        throw UnsupportedOperationException()
+    override fun <A> Set(interfaceName: String, property: String, value: A) =
+        throw UnsupportedOperationException()
+    override fun GetAll(interfaceName: String): Map<String, Variant<*>> = mapOf(
+        "Type" to Variant("peripheral"),
+    )
+}
+
 @DBusInterfaceName("org.bluez.GattService1")
 internal interface GattService1 : DBusInterface
 
@@ -276,6 +307,18 @@ actual class GattServer(
                 } catch (e: Exception) {
                     logger.e(e) { "RegisterApplication failed" }
                 }
+
+                val advertisementPath = "$GATT_APP_PATH/advertisement0"
+                conn.exportObject(advertisementPath, ExportedAdvertisement(advertisementPath))
+                try {
+                    val advertisingManager = conn.getRemoteObject(
+                        "org.bluez", resolveAdapterPath(conn), LEAdvertisingManager1::class.java,
+                    )
+                    advertisingManager.RegisterAdvertisement(DBusPath(advertisementPath), emptyMap())
+                } catch (e: Exception) {
+                    logger.e(e) { "RegisterAdvertisement failed" }
+                }
+
                 logger.d("gatt server ready")
             } catch (e: Exception) {
                 logger.e(e) { "error initializing gatt server" }
@@ -303,6 +346,14 @@ actual class GattServer(
                 .UnregisterApplication(DBusPath("/"))
         } catch (e: Exception) {
             // Best-effort, matches the previous companion process's own DBusException swallow.
+        }
+        try {
+            conn.getRemoteObject("org.bluez", resolveAdapterPath(conn), LEAdvertisingManager1::class.java)
+                .UnregisterAdvertisement(DBusPath("$GATT_APP_PATH/advertisement0"))
+        } catch (e: Exception) {
+            // Best-effort, same as UnregisterApplication above - conn.disconnect() below would
+            // clean this up regardless (BlueZ unregisters everything tied to a dropped
+            // connection automatically).
         }
         // The connection this is closing may already be dead (this is also the recovery path
         // for a NotConnected sendData()) - disconnect() throwing there must not stop connection
