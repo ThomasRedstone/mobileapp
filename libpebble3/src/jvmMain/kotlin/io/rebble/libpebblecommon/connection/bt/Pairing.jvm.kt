@@ -8,7 +8,11 @@ import io.rebble.libpebblecommon.connection.bt.ble.pebble.ConnectivityWatcher
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_BONDED
 import io.rebble.libpebblecommon.connection.bt.ble.pebble.LEConstants.BOND_NONE
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Adapter1
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.AgentManager1
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.Device1
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.PAIRING_AGENT_CAPABILITY
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.PAIRING_AGENT_PATH
+import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.PairingAgent
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.SelfHealingSystemBusConnection
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.devicePathFor
 import io.rebble.libpebblecommon.connection.bt.ble.transport.impl.resolveAdapterPath
@@ -82,6 +86,27 @@ private fun waitForDeviceObject(connection: DBusConnection, path: String): Boole
     return false
 }
 
+// indicator-bluetooth's own registered agent was confirmed live to never actually answer
+// RequestConfirmation - BlueZ's ~30s default agent-reply timeout fires every time and Pair()
+// fails with AuthenticationCanceled. Registering our own agent as the system default only for
+// the duration of this one Pair() call unblocks pairing without depending on that agent - it's
+// unregistered again in the finally block regardless of outcome, handing default-agent status
+// back to whatever else is registered (indicator-bluetooth) for every other device on the phone.
+private fun withPairingAgent(connection: DBusConnection, devicePath: String, block: () -> Unit) {
+    val agentManager = connection.getRemoteObject("org.bluez", "/org/bluez", AgentManager1::class.java)
+    val agentPath = DBusPath(PAIRING_AGENT_PATH)
+    connection.exportObject(PAIRING_AGENT_PATH, PairingAgent(devicePath))
+    try {
+        agentManager.RegisterAgent(agentPath, PAIRING_AGENT_CAPABILITY)
+        agentManager.RequestDefaultAgent(agentPath)
+        block()
+    } finally {
+        runCatching { agentManager.UnregisterAgent(agentPath) }
+            .onFailure { logger.w(it) { "UnregisterAgent failed" } }
+        connection.unExportObject(PAIRING_AGENT_PATH)
+    }
+}
+
 actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
     logger.d("createBond()")
     val path = devicePath(identifier)
@@ -109,10 +134,10 @@ actual fun createBond(identifier: PebbleBleIdentifier): Boolean {
                         }
                     }
                 }
-                val device = connectionHolder.withConnection { connection ->
-                    connection.getRemoteObject("org.bluez", path, Device1::class.java)
+                connectionHolder.withConnection { connection ->
+                    val device = connection.getRemoteObject("org.bluez", path, Device1::class.java)
+                    withPairingAgent(connection, path) { device.Pair() }
                 }
-                device.Pair()
             } catch (e: Exception) {
                 logger.e(e) { "Pair() failed" }
             }
