@@ -293,7 +293,15 @@ class AppstoreService(
     fun isLoggedIn(): Boolean {
         return when (source.url) {
             PEBBLE_FEED_URL -> {
-                Firebase.auth.currentUser != null
+                // Firebase.auth throws IllegalStateException if Firebase itself never
+                // initialized (e.g. desktop with no real google-services.json) - called directly
+                // from composition (LockerAppScreen), so an uncaught throw here re-fires on
+                // every recomposition instead of just once.
+                try {
+                    Firebase.auth.currentUser != null
+                } catch (e: IllegalStateException) {
+                    false
+                }
             }
             REBBLE_FEED_URL -> {
                 pebbleAccountProvider.isLoggedIn()
