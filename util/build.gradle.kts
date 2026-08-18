@@ -182,6 +182,15 @@ val headSha by lazy {
         commandLine("git", "describe", "--always", "--dirty")
     }.standardOutput.asText.get().trim()
 }
+
+// The Ubuntu Touch click's actual released version (manually bumped in lockstep with the
+// click, ubuntuTouchApp/manifest.json is the source of truth) - the desktop target has no git
+// tags to derive a real version from, so CoreAppVersion used the raw git hash instead, which
+// external APIs expecting a real version string (e.g. cohorts.rebble.io) reject with a 400.
+val utClickVersion by lazy {
+    val manifest = rootProject.file("ubuntuTouchApp/manifest.json")
+    Regex(""""version"\s*:\s*"([^"]+)"""").find(manifest.readText())?.groupValues?.get(1) ?: headSha
+}
 val enableQa = System.getenv("QA")?.toBoolean() ?: properties.getProperty("QA")?.toBoolean() ?: true
 
 fun gradleStringPropOrNull(name: String): String? {
@@ -200,6 +209,7 @@ buildkonfig {
 
     defaultConfigs {
         buildConfigField(FieldSpec.Type.STRING, "GIT_HASH", headSha)
+        buildConfigField(FieldSpec.Type.STRING, "UT_CLICK_VERSION", utClickVersion)
         buildConfigField(FieldSpec.Type.BOOLEAN, "QA", enableQa.toString())
         buildConfigField(FieldSpec.Type.STRING, "USER_AGENT_VERSION", headSha)
         buildConfigField(FieldSpec.Type.STRING, "BUG_URL", gradleStringPropOrNull("bugUrl"), nullable = true)

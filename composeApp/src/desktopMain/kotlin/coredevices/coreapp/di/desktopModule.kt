@@ -67,7 +67,7 @@ val desktopModule = module {
     singleOf(::PlatformShareLauncher)
     singleOf(::DesktopPlatform) bind Platform::class
     single<OAuthLauncher> { DesktopOAuthLauncher }
-    single { CoreAppVersion(CommonBuildKonfig.GIT_HASH) }
+    single { CoreAppVersion(CommonBuildKonfig.UT_CLICK_VERSION) }
     singleOf(::PlatformContext)
     singleOf(::DesktopPermissionRequester) bind PermissionRequester::class
     singleOf(::DesktopCompanionDevice) bind CompanionDevice::class
