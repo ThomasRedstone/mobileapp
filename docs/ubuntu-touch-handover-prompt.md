@@ -1,99 +1,184 @@
 # Handover prompt — paste this as the first message in a fresh session
 
-I'm continuing the Ubuntu Touch Phase 6 work on the Pebble/Core companion app
-(`coreapp.tomredstone`). Read `docs/ubuntu-touch-phase6-handover.md` in full first (it has the
-complete technical history — architecture, every bug found/fixed, the deploy workflow, real
-gotchas). This prompt is just the immediate "what's next" briefing so you don't have to
-reconstruct it from that doc's narrative.
+I'm continuing Ubuntu Touch work on the Pebble/Core companion app (`coreapp.thomasredstone`).
+This file is the immediate "what's next" briefing. For deep history read (in this order, as
+needed): `docs/ubuntu-touch-reliability-review.md` (rev 3 — the BLE reliability fix series and
+its own audit of itself), `docs/ubuntu-touch-phase6-handover.md` (deploy ritual, AppArmor patch
+mechanics, architecture), `~/own/ut/ut-telemetry-broker.md` (the OTLP telemetry contract, if
+touching that again). Session summary lives in the transcript if you need exact command history —
+this doc only carries what matters for picking the work back up.
+
+**Version currently deployed and running on-device: 0.1.65.** Stable, no crashes, clean startup.
 
 ## Where things actually stand
 
-Everything up through GATT-server registration, scanning, and initiating a pairing request works
-confined, on-device, proven live against the real watch (Pebble Time 2 / Obelix PVT, MAC
-`DF:07:0A:D4:70:B8`, serial `C1131411010W`). **Version 0.1.19 is built, installed, and
-AppArmor-loaded on the phone right now, but never actually launched/tested** — the session ended
-right after deploying it. Fixed in 0.1.19, none of it yet confirmed working end-to-end:
+### The watch connection — root-caused, not fixed, needs a human
 
-1. **The real pairing timeout bug.** `Device1.Pair()` was failing with `NoReply: No reply within
-   specified time` after ~20s, every single time, with nothing ever showing on the watch's own
-   screen. Root cause: `TransportConfig.withTimeout()` (what two separate earlier "fixes" in this
-   project used) does **not** control per-method-call reply wait at all — confirmed empirically,
-   a 60s value there still produced a NoReply at dbus-java's own hardcoded ~20s default. The real
-   setting is `org.freedesktop.dbus.messages.MethodCall.setDefaultTimeout(long)` — static,
-   JVM-wide. Now set once in `buildSystemBusConnection()` (`BluezDbus.jvm.kt`) to 60s, shared by
-   both `Connect()` and `Pair()`.
-2. **A threading bug**: `createBond()` (JVM) was blocking its caller's thread synchronously for
-   the full D-Bus reply wait — not a suspend fun, so this was a real block, not a suspend. Fixed
-   to fire `Pair()` on a background thread and return immediately (matches how every other
-   platform's `createBond()` actually behaves — request the bond, don't wait for it; the caller
-   already polls `Paired` separately with its own 60s timeout).
-3. **A scanner bug** that made every scan return zero results despite BlueZ having real, fresh
-   advertisement data the whole time: `parseBluezDevices()`'s `ManufacturerData` extraction used
-   an exact `Map<UInt16, Variant<*>>` cast that silently failed against dbus-java's looser
-   decoding inside a fully generic `Variant<?>`. Fixed with defensive `Number`/`ByteArray`
-   coercion instead of an exact-type cast. **This one is confirmed fixed** — 0.1.18 (which had
-   this fix but not #1/#2 yet) successfully found the watch via scan and auto-connected over GATT.
+The watch (`Pebble Time 2 / Obelix PVT`, MAC `DF:07:0A:D4:70:B8`, serial `C1131411010W`, firmware
+`v4.23.0`) has been stuck in a `FailedToConnect` retry loop for most of this session, having
+connected successfully exactly once (after a from-scratch forget+re-pair with a human present).
+**Confirmed via a live `btmon` HCI capture** (captured this session, not guessed): the BLE link
+connects fine, then the encryption handshake fails outright —
+```
+Reason: Authentication Failure (0x05)
+Reason: Connection terminated due to authentication failure (0x04)
+```
+This is a genuine LTK/bond-key mismatch between what the phone has stored and what the watch has
+stored — **not** an app bug, confirmed by reproducing the identical failure with a completely raw
+`bluetoothctl connect`, no app involved at all. `bluetoothctl info DF:07:0A:D4:70:B8` still shows
+`Paired: yes` / `Bonded: yes` on the phone throughout — the phone's own bond record was never
+touched (no `RemoveDevice`/unpair call was made after the last successful pairing). Leading
+theory: the sheer volume of connect/disconnect churn since that pairing (≈8 app-restart deploy
+cycles, plus several manual `bluetoothctl connect`/`disconnect` probes run for diagnostics) is
+suspected to have caused the watch's own NimBLE bond store to evict or corrupt its side —
+unconfirmed, since there's no way to inspect the watch's own flash bond store remotely.
 
-All three are committed (`5e06d883`, "fix the real dbus-java reply timeout, a threading bug, and
-a scanner cast bug").
+**The only real fix**: forget the pairing on both sides again and redo it fresh, human present to
+confirm both the watch-face prompt and the phone's own pairing dialog — same ritual as before.
+No retry-logic/backoff change in the app can fix a genuine key mismatch; every attempt fails
+identically forever until re-paired. **Do this first**, before any of the items below, since
+nothing else in this session can be live-verified against a watch that won't stay connected long
+enough to run the endpoint managers.
 
-## The actual next step
+One live loose end on this: partway through, the user noted the watch shows up under the phone's
+Settings app "**Available devices**" section rather than "Paired devices" (checked: these are
+genuinely separate model lists in `PageComponent.qml`, not just a display quirk) — and separately
+raised that "Available" may just mean "currently in pairing/discoverable mode," which would apply
+to *any* device (known or not) that happens to be discoverable/advertising right now, not
+specifically evidence of an unpaired state. This wasn't resolved before the session ended — worth
+a quick look if it's a fast check, but don't let it block the re-pair above; the `btmon` capture is
+the solid evidence, this Settings-app detail is a secondary curiosity at best.
 
-**Someone needs to be at the phone with the watch nearby.** Kill whatever `coreapp` process is
-currently running (check with `ps aux | grep coreapp/bin/coreapp` — there may be a stale pre-fix
-session still up; check its AppArmor label via `cat /proc/<pid>/attr/current` to see which
-version it's actually running, since old sessions from earlier versions don't get today's fixes
-just because a newer version is installed), then launch fresh via the app icon (or
-`lomiri-app-launch coreapp.tomredstone_coreapp_0.1.19` if driving it remotely — but see the "don't
-steal focus" note below) and let it auto-scan, auto-discover, auto-connect, auto-request-pairing.
-Watch the log (`journalctl -f`, grep for `Pairing`, `PebbleBle`, `createBond`, `Paired`,
-`HealthData`, `BlobDB`) for whether `Device1.Pair()` now actually gets a reply within 60s, and
-whether the watch's own pairing-approval screen appears in time to accept it.
+### Everything else shipped this session (all deployed, all except telemetry's `app.start`
+### unverified against a live watch connection — see "needs verification" below)
 
-If pairing succeeds, the real finish line is unchanged from every prior handover: confirm
-`ConnectivityStatus.paired = true`, then real bidirectional data (health sync, BlobDB) — this
-exact protocol already proved itself working end-to-end once before, unconfined, in an earlier
-phase (`docs/ubuntu-touch-poc-plan.md`, "The usable-app goal, achieved" — search for that
-heading), so if pairing completes there's good reason to expect the rest to just work.
-
-If it fails differently this time, get the *exact* new failure mode before guessing at another
-fix — this session found three real, distinct root causes in a row by reading the actual error
-(`journalctl`, `dmesg` for AppArmor denials) rather than assuming.
+- **0.1.51–0.1.60**: the full reliability-review fix series (MTU handling, lifecycle exemption,
+  StartNotify propagation, re-pair path, forward-path GATT server hardening, connection params,
+  disconnect detection, PPoG retransmit timing, hardcoded adapter path, then a rev-3 self-audit
+  that found and fixed 4 new bugs in the series itself). Doc: `ubuntu-touch-reliability-review.md`.
+- **New GH Actions workflow** (`.github/workflows/ubuntu-touch-build.yml`) — builds the ARM64
+  distributable on a **native** `ubuntu-24.04-arm` GitHub runner instead of local qemu
+  cross-compilation. Minutes instead of 20–45+, and sidesteps this machine's recurring
+  wedged-daemon/memory-pressure flakiness entirely. **Use this for every future build**:
+  ```
+  gh workflow run ubuntu-touch-build.yml --ref ubuntu-touch-poc
+  gh run watch <run-id> --exit-status
+  gh run download <run-id> --name coreapp-distributable --dir /tmp/coreapp-ci-artifact
+  ```
+  Then the normal `clickable build --arch arm64 --accept-review-errors` restage from that
+  artifact. Note: workflow-dispatch workflows must exist **on the default branch (`master`)** to
+  be dispatchable at all, even when run with `--ref ubuntu-touch-poc` — already handled (pushed a
+  registration-only copy to `master` via a throwaway `git worktree`), don't need to repeat that,
+  just keep the two copies in sync if the workflow file changes again.
+- **0.1.61**: locker apps (watchfaces/apps) now prefetch to disk as soon as added to the locker,
+  instead of only downloading reactively when the watch requests them over BLE — installing
+  something already in the library no longer needs a live connection at that moment.
+  `cleanupCache()` no longer evicts owned apps past a size budget, only genuinely orphaned entries.
+- **0.1.62**: real MPRIS-backed music control (`LinuxSystemMusicControl`,
+  `libpebble3/jvmMain/.../telemetry` sibling package `.../di/MprisDbus.jvm.kt` +
+  `LinuxPlatformServices.kt`) — was a pure no-op before. Discovers whichever
+  `org.mpris.MediaPlayer2.*` player is live (prefers `org.mpris.MediaPlayer2.sonicplayer` — Sonic
+  Player, this fleet's own music app — falls back to any other found, e.g. `media-hub-server`'s
+  own `org.mpris.MediaPlayer2.MediaHub`). **Known unfixed gap**: confirmed live via dmesg audit
+  log this session — `org.freedesktop.DBus.ListNames` (how player discovery finds Sonic Player's
+  bus name at all) is AppArmor-**DENIED**:
+  ```
+  apparmor="DENIED" operation="dbus_method_call" path="/org/freedesktop/DBus"
+  interface="org.freedesktop.DBus" member="ListNames" mask="send"
+  label="coreapp.thomasredstone_coreapp_0.1.62" peer_label="unconfined"
+  ```
+  This was found late, while investigating an unrelated app-not-running gap, and **no
+  supplementary AppArmor rule was ever added for it** — the MPRIS `send`/`receive` rule that *was*
+  added (`coreapp-apparmor-patch/install.sh`, scoped to
+  `peer=(name=org.mpris.MediaPlayer2.sonicplayer)` on `/org/mpris/MediaPlayer2`) only covers
+  talking to the player once found; the bus-driver `ListNames` call needed to find it in the first
+  place is still blocked. Needs a rule like:
+  ```
+  dbus (send)
+      bus=session
+      path=/org/freedesktop/DBus
+      interface=org.freedesktop.DBus
+      member=ListNames
+      peer=(name=org.freedesktop.DBus,label=unconfined),
+  ```
+  plausibly also needed for `NameOwnerChanged` (the signal `LinuxSystemMusicControl` subscribes to
+  for live player-appear/disappear detection) — **add both, redeploy, and re-check dmesg for
+  further DENIED lines** before considering MPRIS actually working. This is on top of the watch
+  connection being down — MPRIS itself has never had a chance to prove out end-to-end yet.
+- **0.1.63–0.1.65**: device telemetry via the phone's local OTLP broker
+  (`libpebble3/jvmMain/.../telemetry/DeviceTelemetry.kt`) — `app.start` (verified end-to-end,
+  the record landed in ClickHouse for real, confirmed via the query in
+  `~/own/ut/ut-telemetry-broker.md`), every `UserFacingError` forwarded via the existing
+  `ErrorTracker`, uncaught-exception hooks, and BLE connect-handshake `duration.ms`. Two real
+  startup-crash bugs found and fixed in the process (both instructive if touching this file
+  again): (1) `ErrorTracker` only lives inside `LibPebble3.create()`'s own **separate internal
+  Koin instance** — not reachable from the app-level `koinApp` `Main.kt` builds; route through
+  `LibPebble` instead (it implements `Errors` and *is* exposed at the top level, via
+  `watchModule`'s binding). (2) `java.net.http.HttpClient` isn't in this app's jlink-trimmed
+  runtime image (`composeApp/build.gradle.kts`'s `nativeDistributions.modules(...)` doesn't
+  include `java.net.http`) — `NoClassDefFoundError` at launch. Used `java.net.HttpURLConnection`
+  (`java.base`, always present) instead. **Only `app.start` has been verified with a real
+  ClickHouse record** — the error-forwarding and BLE-duration paths compile and are wired, but
+  never fired for real (no errors occurred; the watch never held a connection long enough to
+  finish a handshake either way). Worth a real check once the watch is reconnecting again.
+- **Explicitly not done, deferred by the user's own choice**: the Android volume-notification
+  spam (`AudioManager.adjustVolume(..., FLAG_SHOW_UI)` popping a system toast per step) —
+  Android-only, scoped as a separate small follow-up, never started this session.
 
 ## Rules that mattered this session — don't relearn them the hard way
 
-- **Never launch, screenshot (`mirscreencast`), or otherwise touch the running app while the user
-  is actively driving it themselves** — `lomiri-app-launch` and similar steal foreground focus on
-  the phone. Only act on the live device between explicit user turns, or when they've said they're
-  not currently interacting with it.
-- **Every version bump needs the full redeploy loop** (see `docs/ubuntu-touch-phase6-handover.md`
-  §"Quick reference: full iteration loop") — build → restage → `clickable build` → `pm push` →
-  patch-and-load AppArmor. The AppArmor patch step is not optional: the standard `bluetooth`
-  policy group alone does not permit BlueZ to call into this app's own exported GATT server
-  objects (confirmed via kernel audit log + reading the actual policy group source on-device) —
-  the loader script needs the supplementary `dbus (receive) path="/{,io/rebble/pebble/ppog/**}"
-  peer=(label=unconfined)` rule patched in every time, exactly as documented in that doc.
-- **A killed/replaced old process doesn't disrupt a differently-versioned running one** — click
-  installs of a new version don't touch a currently-running old version's open files. But **do
-  clean up stale old sessions properly** (kill the process; the AppArmor profile file and
-  `/opt/click.ubuntu.com/coreapp.tomredstone/<old-version>` directory are normally already removed
-  by `click`'s own database on the next install — verify, don't assume) — an old session left
-  running is invisible drift: it shows up as a second app-switcher tile (looks like a duplicate
-  icon, isn't one), and critically, **it's still running whatever bugs the version it was launched
-  from had** — retrying pairing in it will never pick up a fix shipped since.
-- **`bluetoothctl devices Bonded`** is the fastest ground-truth check for whether pairing has ever
-  actually completed, independent of what the app's own UI/DB thinks.
-- Don't run a second parallel `bluetoothctl scan` while the app has its own discovery session
-  open — no evidence it's needed, and it's an unnecessary variable.
+- **Use the GH Actions workflow for builds now**, not local qemu cross-compilation — see above.
+  Local builds still work as a fallback if GH Actions is unavailable, but expect the
+  wedged-daemon/OOM flakiness documented at length earlier in this session's history if you do.
+- **`pkill -f` matches its own invoking command line** — a remote command like
+  `ssh host "pkill -f 'coreapp/bin/coreapp'; ..."` kills the SSH session running it too, since the
+  full command string is visible in `ps` output and matches the pattern. Use `pkill -x coreapp`
+  (exact process-name match) instead.
+- **The `phone-fleet` sync's post-commit hook reliably times out** under a 2-minute default
+  tool timeout, especially when the phone's Tailscale connectivity is flaky (which it was,
+  repeatedly, this session — outages of several minutes each). If a commit's sync output is cut
+  off mid-flight, check `git log` to confirm the commit landed (it does — the hook failing is a
+  sync-step problem, not a commit problem), then re-run `nohup ./sync.sh > logfile 2>&1 & disown`
+  and poll the log for `converged; manifest recorded as applied` vs a `FAIL ... context deadline
+  exceeded` / `EOF` (means connectivity dropped mid-sync, safe to just retry once it's back).
+- **Every `coreapp.thomasredstone` version bump needs `coreapp-apparmor-patch`'s version bumped in
+  lockstep** in `phone-fleet/manifest.yaml`, even when the patch's *content* hasn't changed — the
+  AppArmor profile file itself is regenerated fresh (new filename) on every click install, so the
+  payload must re-apply against the new file every time or the grants silently don't exist.
+- **After every relaunch, re-run**: `bridge-ctl allow coreapp.thomasredstone_coreapp_<version>`
+  and restart `notification-bridged.service` — easy to forget, silently breaks generic
+  notification forwarding until done.
+- **`lomiri-app-launch` printing "Started: ..." is not confirmation the app is actually running**
+  — it can crash immediately after (seen repeatedly this session, both from real bugs and from a
+  harmless `lomiri-app-launch` client-side "Lost our connection with the registry" abort that
+  doesn't reflect the app's own state). Always follow up with a `ps -o pid,etimes,stat,cmd -C
+  coreapp` a few seconds later, and check `journalctl --user -n N` for exceptions if the PID is
+  missing.
+- **Kernel/AppArmor audit lines** (`dmesg | grep DENIED`) are the ground truth for confinement
+  problems — they showed up for the MPRIS `ListNames` gap above and would have shown up for the
+  earlier GATT-server work too. Check them **before** assuming a D-Bus call's own thrown exception
+  tells the whole story (a fire-and-forget signal send has no exception path at all, and even a
+  method-call denial's Kotlin-side exception message doesn't always make clear it was AppArmor,
+  not the peer, that refused it).
+- **`btmon` needs root** (`sudo btmon | tee /tmp/btmon.log`) — no passwordless sudo over this SSH
+  setup, so this needs the user to run it themselves in their own terminal on-device (or provide a
+  password). Once captured, the log file was readable afterward without further sudo (owned by
+  `phablet`, not root, since `tee` was the writer).
 
-## New, unverified input worth a skeptical read
+## The actual next step
 
-`docs/ubuntu-touch-architectural-paths.md` appeared in the repo this session (not authored by me)
-— it argues Ubuntu Touch's `SIGSTOP`-on-background lifecycle makes a split UI-click +
-background-daemon architecture "100% correct and strictly necessary," reversing Phase 6's
-single-package decision. The `SIGSTOP` claim itself is consistent with something actually observed
-this session (backgrounded `coreapp` processes repeatedly showed up in `ps` as state `T`), but the
-"strictly necessary split architecture" conclusion isn't something this session tested or
-confirmed — treat it as a claim to verify, not a settled decision, and definitely don't let it
-block the immediate pairing test above (foreground behavior, which is all that's being tested
-right now, isn't affected by background-suspension behavior either way).
+1. Get a human physically present with both devices. Forget the watch's pairing on the watch's
+   own settings; `bluetoothctl remove DF:07:0A:D4:70:B8` on the phone (**not yet done** — checked
+   at session end, the phone's bond is still present: `Paired: yes`, `Bonded: yes`, `Connected:
+   no`. Nothing was removed this session; that's the actual next action, not something to just
+   verify). Re-pair fresh, confirming both prompts.
+2. Once a stable connection holds for more than a few minutes, that's the first real chance to
+   verify: MPRIS music control (after adding the `ListNames`/`NameOwnerChanged` AppArmor rules
+   above — do that *before* testing, or expect it to silently do nothing), the offline locker
+   prefetch (add something to the locker, confirm it's cached before ever asking the watch for
+   it), and telemetry's error/duration event paths (trigger a deliberate failure or watch a real
+   connect succeed, then check ClickHouse).
+3. If the connection breaks again after a deploy-restart cycle, that's expected per the churn
+   theory above — but if it happens **without** any restart, on a connection that was genuinely
+   stable, that would be new information worth a fresh `btmon` capture to see if it's the same
+   `Authentication Failure` or something different.
