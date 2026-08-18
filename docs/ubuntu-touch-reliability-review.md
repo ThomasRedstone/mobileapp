@@ -423,3 +423,22 @@ watch. If this is right, it's a one- or two-line fix (adding an `LEAdvertisingMa
 definition + a `RegisterAdvertisement` call at `GattServer` init, mirroring the existing
 `GattManager1`/`Adapter1` interface definitions in `BluezDbus.jvm.kt`) that would unblock the
 entire forward-path fallback, not just this specific symptom.
+
+**Confirmed live, same session, 0.1.67**: implemented and deployed. First reconnect after deploy
+went straight to `ConnectedPebbleDevice` with a fully populated `WatchInfo` — no
+`TimeoutInitializingPpog`, no PPoG failure at all. Real traffic flowed immediately: health data
+(`HealthDataProcessor` step records), BlobDB sync (`SyncDone`, dynamic queries refreshing across
+every database), data-logging sessions opening and ACKing, music-control state pushed to the
+watch. `bluetoothctl info` confirms `Connected: yes` holding steady with no disconnect. The theory
+was correct: `bluetoothd` needed an active `LEAdvertisingManager1` registration before it would
+merge a `RegisterApplication`'d local GATT database into what it serves to a peer, even on a
+connection the local adapter itself initiated as central. This closes finding 5's forward-path
+fallback hazards — the fallback path now actually works, on top of the reversed-path fixes from
+the original series.
+
+One separate, minor, non-blocking issue noticed in the same logs: `cohorts.rebble.io` still
+returns 400 even with a real version string now (`mobileVersion=0.1.67`) — the earlier "raw git
+hash" bug (see the composeApp/CoreAppVersion fix elsewhere this session) is fixed, but something
+else about the request still isn't accepted server-side (worth checking whether `mobilePlatform=
+desktop` itself is an unrecognized value to that API, separate from the version-format issue).
+Not investigated further tonight; doesn't block anything.
