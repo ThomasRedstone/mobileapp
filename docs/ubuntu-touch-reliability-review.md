@@ -372,3 +372,54 @@ with this device's BlueZ object specifically" — a restart doesn't touch per-de
 forward-path PPoG timeout (finding 5 above) on its own — i.e. tonight's new issue and the
 already-known PPoG issue are cleanly separable and this confirms the abort-loop finding doesn't
 also explain the PPoG one.
+
+---
+
+# Addendum (2026-08-18, continued): forward-path PPoG root cause found — `bluetoothd` never serves our registered GATT server to a connection we initiated
+
+Finding 5's "forward-path fallback hazards" section already covered several real hazards in this
+app's own GATT-server code, but none of them explain the actual, currently-live symptom: the watch
+never once calls `StartNotify`/`WriteValue`/`ReadValue` on our exported characteristics, across
+dozens of reconnects, with no AppArmor denial and a successful `RegisterApplication`. Root-caused
+tonight via two independent checks:
+
+**1. Firmware side, ruled out** (`~/own/PebbleOS`): the watch's forward-path GATT discovery
+(`kernel_le_client.c: prv_handle_connection_event()`) is unconditional and fresh on every single
+BLE connection — `gatt_client_discovery_discover_all()` runs on every `PEBBLE_BLE_CONNECTION_EVENT`
+with `connected == true`, and the `GAPLEConnection` struct holding any per-connection discovery
+cache is freed on every disconnect (`gap_le_connection_remove()`). There is no persistent handle
+cache surviving a reconnect, and no "give up after N failures" gate on attempting discovery again.
+The watch is not the problem.
+
+**2. `bluetoothd` side, confirmed live** via a `btmon -t` capture of a connection that reached the
+GATT-discovery stage cleanly (post the connect-abort-loop mitigation above): the watch's own ATT
+client does send real, paginated `Read By Group Type Request`s for Primary Service discovery. The
+first response correctly lists the standard system services (`Generic Access`, `Generic Attribute`,
+`Device Information`, handles `0x0001`–`0x0012`). The watch then continues pagination with
+`Read By Group Type Request, Handle range: 0x0013-0xffff` (exactly where a custom service would
+continue) — and **`bluetoothd` responds `Error Response: Attribute Not Found`**. Our
+`RegisterApplication`'d PPOGATT service (`GetManagedObjects()` correctly lists it, confirmed in
+earlier logs) is **completely absent from the ATT database actually served to the watch over this
+connection**, despite registration having succeeded from our own process's point of view.
+
+**Leading theory**: this app's `GattServer.jvm.kt` calls `GattManager1.RegisterApplication()` but
+**never calls `LEAdvertisingManager1.RegisterAdvertisement()`** (confirmed: zero references to
+advertising anywhere in that file) — the app never advertises, since the watch always initiates
+via a stored bond, not discovery. `bluetoothd`'s internal ATT server may only merge a
+`RegisterApplication`'d local GATT database into what's served to a peer when the local adapter is
+also in an active peripheral/advertising role — a state this app never enters, since every
+connection is phone-initiated (`Device1.Connect()`, central role only). General BlueZ
+documentation doesn't state this as a hard requirement, but doesn't rule it out either — "GATT
+server registered, but adapter never advertises, connections always outbound-initiated" appears to
+be genuinely untested territory for `bluetoothd`, going by how consistently GATT-server examples
+pair `RegisterApplication` with `RegisterAdvertisement`.
+
+**Concrete next step, not yet tried**: have `GattServer.jvm.kt` also register a minimal LE
+advertisement (`LEAdvertisingManager1.RegisterAdvertisement()`) alongside its existing
+`RegisterApplication()` call — it doesn't need to be discoverable or even contain the PPOGATT
+service UUID; the test is whether merely having an *active* registered advertisement changes
+whether `bluetoothd` serves the custom GATT database to an already-connected, already-bonded
+watch. If this is right, it's a one- or two-line fix (adding an `LEAdvertisingManager1` interface
+definition + a `RegisterAdvertisement` call at `GattServer` init, mirroring the existing
+`GattManager1`/`Adapter1` interface definitions in `BluezDbus.jvm.kt`) that would unblock the
+entire forward-path fallback, not just this specific symptom.
