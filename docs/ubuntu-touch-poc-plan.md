@@ -1032,7 +1032,7 @@ work unmodified for this app's current architecture. Two real, already-proven pa
 projects in `~/own/` for exactly this — privileged work happens outside confinement, the main app
 stays confined — worth reusing rather than re-deriving:
 
-- **`ut-sonic-player`'s pattern: a system `.deb` installs a custom AppArmor policygroup.**
+- **`rack`'s pattern: a system `.deb` installs a custom AppArmor policygroup.**
   `packaging/system-deb/build.sh` builds a small `_all.deb` that drops a policygroup file into
   `/usr/share/apparmor/easyprof/policygroups/ubuntu/<policy-version>/`, then its `postinst` runs
   `aa-clickhook -f` and reloads the click's profile via `apparmor_parser -r`. This grants the
@@ -1105,7 +1105,7 @@ work**, not Libertine. Concretely:
 - The confined Click talks to the helper via `linux-auto`'s proven pattern: writes into its own
   writable directory (always permitted, no policy group needed), a root-owned systemd path unit
   notices and acts, status returns the same way. Matches what a Click reviewer will accept -
-  `ut-sonic-player`'s custom-policygroup alternative is a real reviewer red flag for exactly the
+  `rack`'s custom-policygroup alternative is a real reviewer red flag for exactly the
   kind of broad D-Bus access this app needs.
 - This sidesteps the discovered Libertine-specific problems entirely (the `/run/dbus` sandbox
   block, the `?`-directory `user.home` bug, per-invocation-private `/run` tmpfs breaking
@@ -1248,12 +1248,12 @@ distributable clickable could theoretically wrap later. Done for real:
   is purely packaging: `manifest.json` + `coreapp.apparmor` (`policy_groups: ["bluetooth",
   "networking"]`) + `coreapp.desktop` + the staged app image, via `install_root_data`.
 - **`clickable build --arch arm64 --accept-review-errors` genuinely produces a `.click`** (181MB
-  compressed) - the `--accept-review-errors` need matches `ut-sonic-player`'s already-documented
+  compressed) - the `--accept-review-errors` need matches `rack`'s already-documented
   precedent exactly (the bundled click-reviewer doesn't know this framework/policy-group
   combination, FAILs review, still produces the package).
 - **Real, load-bearing bug found and fixed via this exact build**: first install attempt used
   `framework: "ubuntu-touch-24.04-2.x"` (matching this device's actual image tag, and
-  `ut-sonic-player`'s choice) - and the on-device `click-apparmor` tooling silently
+  `rack`'s choice) - and the on-device `click-apparmor` tooling silently
   **skipped generating any AppArmor profile at all** (`Invalid policy version for
   '....json'. Skipping`), not just the bundled review linter (which had already flagged the same
   framework string as invalid, but this proves it's a real device-side gap, not just a stale
