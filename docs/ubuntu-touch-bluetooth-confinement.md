@@ -1,3 +1,5 @@
+> Historical design note; some conclusions are superseded. Current build and installation boundaries: [UT port README](../ubuntuTouchApp/README.md). Do not use this as a universal device support claim.
+
 # Ubuntu Touch PoC: Deep Dive into Bluetooth Confinement
 
 The proposed Phase 6 architecture (X11-packaged-as-Click) relies on splitting the app into two parts: a confined Click package for the UI, and a system-level `.deb` helper daemon for Bluetooth (BLE) access. This split exists because of the assumption that Click app confinement strictly blocks access to the system D-Bus and `bluez5`.

@@ -1,3 +1,5 @@
+> Historical design note; some conclusions are superseded. Current build and installation boundaries: [UT port README](../ubuntuTouchApp/README.md). Do not use this as a universal device support claim.
+
 # Ubuntu Touch PoC: Current Concerns and Risks
 
 While the present direction (Phase 6) successfully resolves the technical roadblocks of the proof-of-concept, there are absolutely still some problematic areas and significant risks in the chosen direction for an actual production release. 

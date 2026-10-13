@@ -50,15 +50,22 @@ jobs:
       - name: Use dummy google-services json
         run: mv androidApp/src/google-services-dummy.json androidApp/src/google-services.json
       - name: Build distributable (native ARM64 - no qemu cross-compile)
-        run: ./gradlew :composeApp:createDistributable --no-configuration-cache
-        env:
-          GITHUB_ACTOR: ${{ secrets.READ_PACKAGES_ACTOR }}
-          GITHUB_TOKEN: ${{ secrets.READ_PACKAGES_TOKEN }}
+        run: |
+          python3 -m pip install clickable-ut==8.9.0
+          ./ubuntuTouchApp/build-public.sh
       - name: Verify architecture
-        run: file composeApp/build/compose/binaries/main/app/coreapp/bin/coreapp
+        run: |
+          file composeApp/build/compose/binaries/main/app/coreapp/bin/coreapp | grep -q "ARM aarch64"
+          file composeApp/build/compose/binaries/main/app/coreapp/lib/runtime/bin/java | grep -q "ARM aarch64"
       - name: Upload distributable
         uses: actions/upload-artifact@v4
         with:
           name: coreapp-distributable
           path: composeApp/build/compose/binaries/main/app/coreapp/
           retention-days: 7
+      - name: Upload click
+        uses: actions/upload-artifact@v4
+        with:
+          name: coreapp-ut-click
+          path: ubuntuTouchApp/build/**/*.click
+          if-no-files-found: error
