@@ -11,7 +11,7 @@ cd "$ROOT"
 ./gradlew :composeApp:createDistributable --no-configuration-cache --no-daemon --max-workers="$UT_BUILD_JOBS"
 IMAGE="$ROOT/composeApp/build/compose/binaries/main/app/coreapp"
 file "$IMAGE/bin/coreapp" | grep -q 'ARM aarch64'
-file "$IMAGE/lib/runtime/bin/java" | grep -q 'ARM aarch64'
+file "$IMAGE/lib/runtime/lib/server/libjvm.so" | grep -q 'ARM aarch64'
 cp -a "$IMAGE" "$HERE/coreapp"
 cp "$ROOT/LICENSE" "$HERE/coreapp/PORT-UPSTREAM-LICENSE"
 git rev-parse HEAD > "$HERE/coreapp/PORT-SOURCE-REVISION"

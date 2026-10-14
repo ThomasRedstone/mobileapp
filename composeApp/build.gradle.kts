@@ -1,3 +1,9 @@
+import java.security.MessageDigest
+import java.util.jar.Manifest
+import java.util.jar.Attributes
+import java.util.jar.JarOutputStream
+import java.util.jar.JarFile
+import java.util.jar.JarEntry
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -214,7 +220,11 @@ kotlin {
         }
         val desktopMain by getting {
             dependencies {
-                implementation(compose.desktop.currentOs)
+                implementation(when (providers.gradleProperty("utTargetArch").orNull) {
+                    null -> compose.desktop.currentOs
+                    "arm64" -> compose.desktop.linux_arm64
+                    else -> error("utTargetArch must be arm64 when explicitly set")
+                })
                 implementation(libs.ktor.client.okhttp)
                 implementation(libs.coroutines)
                 // :util depends on :libindex via implementation(), which doesn't leak
@@ -346,4 +356,54 @@ tasks.register("printDesktopRuntimeClasspath") {
 
 compose.resources {
     packageOfResClass = "coreapp.composeapp.generated.resources"
+}
+
+// Compile platform-independent JVM code on a native host, then let an ARM64
+// JDK perform only jpackage. Native Compose dependencies are explicitly ARM64.
+tasks.register("stageUtJvmInput") {
+    val runtimeClasspath = configurations.named("desktopRuntimeClasspath")
+    val appJar = tasks.named<Jar>("desktopJar")
+    dependsOn(appJar, runtimeClasspath)
+    inputs.files(appJar, runtimeClasspath)
+    doLast {
+        check(providers.gradleProperty("utTargetArch").orNull == "arm64") {
+            "stageUtJvmInput requires -PutTargetArch=arm64"
+        }
+        val target = file(providers.gradleProperty("utJvmOutput").getOrElse(
+            layout.buildDirectory.dir("ut-jvm-input").get().asFile.absolutePath))
+        check(!target.exists()) { "Preserve existing input staging and choose a new utJvmOutput" }
+        target.mkdirs()
+        val resolved = runtimeClasspath.get().files.toList()
+        check(resolved.all { it.isFile && it.extension in setOf("jar", "pom") }) { "Unexpected runtime artifact" }
+        // Maven POM-only aggregator dependencies have no executable classes.
+        val ordered = resolved.filter { it.extension == "jar" }
+        val stagedNames = ordered.map { source ->
+            check(source.isFile && source.extension == "jar") { "Expected runtime JAR: $source" }
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(source.readBytes()).joinToString("") { "%02x".format(it) }
+            val name = "${digest}-${source.name}"
+            val destination = target.resolve(name)
+            if (!destination.exists()) source.copyTo(destination)
+            name
+        }
+        val original = appJar.get().archiveFile.get().asFile
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            mainAttributes[Attributes.Name.MAIN_CLASS] = "coredevices.coreapp.MainKt"
+            mainAttributes[Attributes.Name.CLASS_PATH] = stagedNames.joinToString(" ")
+        }
+        JarOutputStream(target.resolve("coreapp.jar").outputStream(), manifest).use { output ->
+            JarFile(original).use { input ->
+                val entries = input.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.name == "META-INF/MANIFEST.MF") continue
+                    output.putNextEntry(JarEntry(entry.name))
+                    if (!entry.isDirectory) input.getInputStream(entry).use { it.copyTo(output) }
+                    output.closeEntry()
+                }
+            }
+        }
+        target.resolve("RUNTIME-CLASSPATH.txt").writeText(stagedNames.joinToString("\n") + "\n")
+    }
 }
