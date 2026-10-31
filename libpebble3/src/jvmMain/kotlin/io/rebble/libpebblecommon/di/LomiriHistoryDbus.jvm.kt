@@ -46,12 +46,12 @@ internal interface HistoryService : DBusInterface {
         filter: Map<String, Variant<*>>,
     ): String
 
-    class EventsAdded(path: String, val events: List<Map<String, Variant<*>>>) : DBusSignal(path, events)
+    class EventsAdded(path: String, val events: List<Map<String, *>>) : DBusSignal(path, events)
 }
 
 @DBusInterfaceName("com.lomiri.HistoryService.EventView")
 internal interface HistoryEventView : DBusInterface {
-    fun NextPage(): List<Map<String, Variant<*>>>
+    fun NextPage(): List<Map<String, *>>
     fun GetTotalCount(): Int
     fun Destroy()
 }
@@ -63,13 +63,20 @@ internal interface HistoryEventView : DBusInterface {
 internal fun DBusConnection.historyEventView(path: String): HistoryEventView =
     getRemoteObject("com.lomiri.HistoryService", path, HistoryEventView::class.java)
 
-private fun Map<String, Variant<*>>.string(key: String): String? = this[key]?.value as? String
-private fun Map<String, Variant<*>>.long(key: String): Long? = when (val v = this[key]?.value) {
+private fun unwrapValue(raw: Any?): Any? = if (raw is Variant<*>) raw.value else raw
+
+internal fun Map<String, *>.string(key: String): String? = unwrapValue(this[key]) as? String
+internal fun Map<String, *>.long(key: String): Long? = when (val v = unwrapValue(this[key])) {
     is Number -> v.toLong()
     else -> null
 }
-internal fun Map<String, Variant<*>>.int(key: String): Int? = when (val v = this[key]?.value) {
+internal fun Map<String, *>.int(key: String): Int? = when (val v = unwrapValue(this[key])) {
     is Number -> v.toInt()
+    else -> null
+}
+internal fun Map<String, *>.bool(key: String): Boolean? = when (val v = unwrapValue(this[key])) {
+    is Boolean -> v
+    is Number -> v.toInt() != 0
     else -> null
 }
 
@@ -90,13 +97,13 @@ internal data class HistoryTextEvent(
 )
 
 @Suppress("UNCHECKED_CAST")
-private fun Map<String, Variant<*>>.participantAlias(): String? {
-    val participants = this["participants"]?.value as? List<*> ?: return null
-    val first = participants.firstOrNull() as? Map<String, Variant<*>> ?: return null
+private fun Map<String, *>.participantAlias(): String? {
+    val participants = unwrapValue(this["participants"]) as? List<*> ?: return null
+    val first = participants.firstOrNull() as? Map<String, *> ?: return null
     return first.string("alias")
 }
 
-internal fun Map<String, Variant<*>>.toHistoryCallEvent(): HistoryCallEvent? {
+internal fun Map<String, *>.toHistoryCallEvent(): HistoryCallEvent? {
     val senderId = string("senderId") ?: return null
     val timestamp = string("timestamp") ?: return null
     return HistoryCallEvent(
@@ -108,7 +115,7 @@ internal fun Map<String, Variant<*>>.toHistoryCallEvent(): HistoryCallEvent? {
     )
 }
 
-internal fun Map<String, Variant<*>>.toHistoryTextEvent(): HistoryTextEvent? {
+internal fun Map<String, *>.toHistoryTextEvent(): HistoryTextEvent? {
     val senderId = string("senderId") ?: return null
     val message = string("message") ?: return null
     val timestamp = string("timestamp") ?: return null
@@ -117,6 +124,6 @@ internal fun Map<String, Variant<*>>.toHistoryTextEvent(): HistoryTextEvent? {
         senderName = participantAlias(),
         message = message,
         timestampIso = timestamp,
-        newEvent = this["newEvent"]?.value as? Boolean ?: false,
+        newEvent = bool("newEvent") ?: false,
     )
 }
