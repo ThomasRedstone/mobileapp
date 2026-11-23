@@ -16,16 +16,19 @@ export TMPDIR="$HOME/.cache/coreapp.thomasredstone/tmp"
 # arbitrary coreutils (ls | head) and open() on the /tmp/.X11-unix/ directory itself for listing
 # (confirmed via dmesg: "DENIED ... open ... name=/tmp/.X11-unix/"), but a stat() on a specific,
 # named socket path isn't mediated the same way and just works.
-X11_DISPLAY=""
-for n in 0 1 2 3 4 5 6 7 8 9; do
-    if [ -S "/tmp/.X11-unix/X$n" ]; then
-        X11_DISPLAY="$n"
-        break
+if [ -z "$DISPLAY" ]; then
+    X11_DISPLAY=""
+    # Check candidates up to :32 in descending order so newer Xwayland allocations take precedence
+    for n in 32 31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0; do
+        if [ -S "/tmp/.X11-unix/X$n" ]; then
+            X11_DISPLAY="$n"
+            break
+        fi
+    done
+    if [ -z "$X11_DISPLAY" ]; then
+        echo "coreapp-launch.sh: no X11 socket found in /tmp/.X11-unix (checked :0-:32)" >&2
+        exit 1
     fi
-done
-if [ -z "$X11_DISPLAY" ]; then
-    echo "coreapp-launch.sh: no X11 socket found in /tmp/.X11-unix (checked :0-:9)" >&2
-    exit 1
+    export DISPLAY=":$X11_DISPLAY"
 fi
-export DISPLAY=":$X11_DISPLAY"
 exec coreapp/bin/coreapp "$@"

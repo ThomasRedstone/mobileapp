@@ -200,7 +200,7 @@ class LinuxSystemMusicControl(
             val names = runCatching {
                 busDriver.ListNames().filter { it.startsWith(MPRIS_BUS_PREFIX) }
             }.getOrDefault(emptyList())
-            val chosen = names.firstOrNull { it == PREFERRED_BUS_NAME } ?: names.firstOrNull()
+            val chosen = chooseMprisPlayer(names, PREFERRED_BUS_NAME)
             if (chosen != current) {
                 current = chosen
                 trySend(chosen)
@@ -294,9 +294,43 @@ class LinuxSystemMusicControl(
         }
     }
 
-    override fun play() = withPlayer { it.Play() }
+    /**
+     * Play must work from cold: with no player running, the watch's play button would otherwise
+     * do nothing ("No MPRIS player available"). Waking Rack by its well-known name starts it, and
+     * Rack answers a Play with nothing queued by shuffling the library - the same thing the car's
+     * Play button gets from linux-auto's userd.
+     */
+    private fun sendPlay(toggle: Boolean) {
+        val busName = playbackState.value?.playerInfo?.packageId
+        libPebbleCoroutineScope.launch {
+            val status = busName?.let { name ->
+                runCatching {
+                    sessionBus.getRemoteObject(name, MPRIS_OBJECT_PATH, Properties::class.java)
+                        .Get<String>(MPRIS_PLAYER_INTERFACE, "PlaybackStatus")
+                }.getOrNull()
+            }
+            val command = mprisPlayCommand(busName, status, toggle)
+            // The sonicplayer alias, not "rack": coreapp's AppArmor grant (phone-fleet
+            // coreapp-apparmor-patch) is scoped to it, and it is D-Bus-activatable too.
+            val target = if (command == MprisPlayCommand.WakePreferred) PREFERRED_BUS_NAME else busName!!
+            if (command == MprisPlayCommand.WakePreferred) {
+                logger.i { "Play with no MPRIS player running - waking $target" }
+            }
+            try {
+                val player = sessionBus.getRemoteObject(target, MPRIS_OBJECT_PATH, MprisPlayer::class.java)
+                when (command) {
+                    MprisPlayCommand.PlayPause -> player.PlayPause()
+                    else -> player.Play()
+                }
+            } catch (e: Exception) {
+                logger.w(e) { "MPRIS $command to $target failed" }
+            }
+        }
+    }
+
+    override fun play() = sendPlay(toggle = false)
     override fun pause() = withPlayer { it.Pause() }
-    override fun playPause() = withPlayer { it.PlayPause() }
+    override fun playPause() = sendPlay(toggle = true)
     override fun nextTrack() = withPlayer { it.Next() }
     override fun previousTrack() = withPlayer { it.Previous() }
     override fun volumeUp() = adjustVolume(VOLUME_STEP)

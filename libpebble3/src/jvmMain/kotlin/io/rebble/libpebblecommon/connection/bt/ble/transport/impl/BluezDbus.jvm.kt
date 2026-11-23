@@ -66,7 +66,10 @@ private const val DBUS_REPLY_TIMEOUT_MS = 60_000L
 
 internal fun buildSystemBusConnection(): DBusConnection {
     MethodCall.setDefaultTimeout(DBUS_REPLY_TIMEOUT_MS)
-    val builder = DBusConnectionBuilder.forSystemBus()
+    // Each owner closes its connection independently. dbus-java defaults to a shared,
+    // reference-counted singleton; a connector's disconnect() followed by close() can
+    // consume another owner's reference and unregister the long-lived GATT server.
+    val builder = DBusConnectionBuilder.forSystemBus().withShared(false)
     currentUnixUid()?.let { uid ->
         builder.transportConfig().configureSasl().withSaslUid(uid).back()
     }
