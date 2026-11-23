@@ -10,7 +10,10 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: 17
+          # 21, not 17: this job also runs jvmTest, and the jvm() targets compile to JVM 21
+          # (Compose Multiplatform's own jvm artifacts need it, see pebble/build.gradle.kts).
+          # Android bytecode still targets 17.
+          java-version: 21
       - name: Checkout source
         uses: actions/checkout@v4
         with:
