@@ -48,8 +48,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coreapp.composeapp.generated.resources.Res
-import coreapp.composeapp.generated.resources.index01_mic
+import coreapp.ring.generated.resources.Res
+import coreapp.ring.generated.resources.index01_mic
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.imageResource

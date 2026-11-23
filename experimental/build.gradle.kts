@@ -56,7 +56,10 @@ kotlin {
         }
     }
 
-    jvm()
+    // No jvm() target: :experimental (Ring/Index) is android/iOS-only. composeApp desktop
+    // reaches it only through ExperimentalDevicesFacade (see composeApp/build.gradle.kts),
+    // and its commonMain needs firebase-crashlytics and coredevices.haversine, which
+    // publish no jvm() variant, so a jvm target fails dependency resolution.
 
 // Target declarations - add or remove as needed below. These define
 // which platforms this KMP module supports.
@@ -256,13 +259,6 @@ kotlin {
         iosMain {
             dependencies {
                 implementation(libs.okio)
-            }
-        }
-
-        jvmMain {
-            dependencies {
-                implementation(libs.ktor.client.okhttp)
-                implementation(libs.zxing.core)
             }
         }
     }

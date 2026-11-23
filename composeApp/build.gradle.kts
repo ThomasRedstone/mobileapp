@@ -208,6 +208,7 @@ kotlin {
             implementation(libs.coil.gif)
             implementation(libs.coredevices.haversine)
             implementation(project(":experimental"))
+            implementation(project(":libindex"))
         }
         getByName("androidHostTest").dependencies {
             implementation(libs.ktor.client.okhttp)
@@ -217,6 +218,7 @@ kotlin {
             implementation(libs.crashkios)
             implementation(libs.firebase.crashlytics)
             implementation(project(":experimental"))
+            implementation(project(":libindex"))
         }
         val desktopMain by getting {
             dependencies {
