@@ -78,9 +78,15 @@ actual val platformModule: Module = module {
     single {
         PhoneCapabilities(CommonPhoneCapabilities)
     }
+    // Report Android, not Linux. PebbleOS only enables Pebble Protocol music (track
+    // metadata from the phone, play/pause/skip from the watch) when the phone says it is
+    // Android (services/music/endpoint.c, music_endpoint_handle_mobile_app_info_event);
+    // for any other OS it waits for AMS (iOS's BLE media service), which Linux doesn't
+    // provide. So reporting Linux leaves the Music app blank and its buttons dead. As of
+    // PebbleOS v4.23 the music endpoint is the only thing that reads this value.
     single {
         PlatformFlags(
-            PhoneAppVersion.PlatformFlag.makeFlags(PhoneAppVersion.OSType.Linux, emptyList())
+            PhoneAppVersion.PlatformFlag.makeFlags(PhoneAppVersion.OSType.Android, emptyList())
         )
     }
     singleOf(::LinuxNotificationListenerConnection) bind NotificationListenerConnection::class
