@@ -36,6 +36,7 @@ import io.rebble.libpebblecommon.packets.blobdb.TimelineItem
 import io.rebble.libpebblecommon.services.blobdb.TimelineActionResult
 import io.rebble.libpebblecommon.util.GeolocationPositionResult
 import io.rebble.libpebblecommon.util.SystemGeolocation
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -451,28 +452,51 @@ class LinuxNotificationListenerConnection(
         // `bridge-ctl allow <identity>` after this app's first run, with no way for the daemon
         // to notify us when that happens), and a one-shot attempt would otherwise need a full
         // app restart to pick that up.
-        libPebbleScope.launch {
-            var retryDelay = SUBSCRIBE_RETRY_INITIAL_DELAY
-            while (true) {
-                try {
-                    sessionBus.getRemoteObject(
-                        NOTIFICATION_BRIDGE_BUS_NAME,
-                        NOTIFICATION_BRIDGE_OBJECT_PATH,
-                        NotificationBridge1::class.java,
-                    ).Subscribe()
-                    linuxTelephonyLogger.i { "Subscribed to NotificationBridge1" }
-                    return@launch
-                } catch (e: Exception) {
-                    linuxTelephonyLogger.w(e) {
-                        "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
-                            "(needs `bridge-ctl allow <identity>`) or the daemon isn't running; " +
-                            "retrying in $retryDelay"
+        //
+        // The bridge keeps its subscribers in memory, so when it restarts (a redeploy, or
+        // systemd's Restart=always after a crash) it has forgotten this app, and notifications
+        // stop with nothing logged on either side. So subscribe again whenever the bridge's bus
+        // name gets a new owner.
+        val subscribeLock = Any()
+        var subscribeJob: Job? = null
+        fun subscribe() = synchronized(subscribeLock) {
+            subscribeJob?.cancel()
+            subscribeJob = libPebbleScope.launch {
+                var retryDelay = SUBSCRIBE_RETRY_INITIAL_DELAY
+                while (true) {
+                    try {
+                        sessionBus.getRemoteObject(
+                            NOTIFICATION_BRIDGE_BUS_NAME,
+                            NOTIFICATION_BRIDGE_OBJECT_PATH,
+                            NotificationBridge1::class.java,
+                        ).Subscribe()
+                        linuxTelephonyLogger.i { "Subscribed to NotificationBridge1" }
+                        return@launch
+                    } catch (e: Exception) {
+                        linuxTelephonyLogger.w(e) {
+                            "Couldn't subscribe to NotificationBridge1 - not authorized yet " +
+                                "(needs `bridge-ctl allow <identity>`) or the daemon isn't running; " +
+                                "retrying in $retryDelay"
+                        }
+                        delay(retryDelay)
+                        retryDelay = (retryDelay * 2).coerceAtMost(SUBSCRIBE_RETRY_MAX_DELAY)
                     }
-                    delay(retryDelay)
-                    retryDelay = (retryDelay * 2).coerceAtMost(SUBSCRIBE_RETRY_MAX_DELAY)
                 }
             }
         }
+        val bridgeOwnerHandler = DBusSigHandler<DBus.NameOwnerChanged> { signal ->
+            if (bridgeOwnerGained(signal.name, signal.newOwner)) {
+                linuxTelephonyLogger.i { "NotificationBridge1 has a new owner (${signal.newOwner}) - subscribing again" }
+                subscribe()
+            }
+        }
+        runCatching { sessionBus.addSigHandler(DBus.NameOwnerChanged::class.java, bridgeOwnerHandler) }
+            .onFailure {
+                linuxTelephonyLogger.w(it) {
+                    "couldn't watch NotificationBridge1's owner - a bridge restart will stop notifications until this app restarts"
+                }
+            }
+        subscribe()
     }
 
     private companion object {
