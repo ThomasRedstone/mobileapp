@@ -50,3 +50,9 @@ internal interface NotificationBridge1 : DBusInterface {
         expireTimeout,
     )
 }
+
+/** True when [name] is the bridge's bus name and it has just been taken by a (new) process -
+ *  the moment a subscriber must Subscribe() again, because the bridge keeps subscribers only in
+ *  memory. A lost owner (empty [newOwner]) is not: there is nothing to subscribe to yet. */
+internal fun bridgeOwnerGained(name: String?, newOwner: String?): Boolean =
+    name == NOTIFICATION_BRIDGE_BUS_NAME && !newOwner.isNullOrEmpty()
