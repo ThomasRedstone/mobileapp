@@ -48,6 +48,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -231,7 +232,13 @@ class WatchManagerTest {
         }
     }
     private val blePlatformConfig =
-        BlePlatformConfig(delayBleConnectionsAfterAppStart = false, delayBleDisconnections = false)
+        BlePlatformConfig(
+            delayBleConnectionsAfterAppStart = false,
+            delayBleDisconnections = false,
+            // repeatConnections drives 20 failed connects; the tiered backoff would wait minutes
+            // of real time. The tiers themselves are covered by reconnectBackoffTiers.
+            backoffReconnectsAfterFailures = false,
+        )
 
     private fun create(scope: CoroutineScope): WatchManager {
         val libPebbleCoroutineScope = LibPebbleCoroutineScope(scope.coroutineContext)
@@ -318,6 +325,20 @@ class WatchManagerTest {
 //        watchManager.watches.first { it.any { it is ConnectedPebbleDevice } }
 //        assertFalse(exceededMax)
 //    }
+
+    @Test
+    fun reconnectBackoffTiers() {
+        assertEquals(Duration.ZERO, reconnectBackoff(0))
+        assertEquals(Duration.ZERO, reconnectBackoff(1))
+        assertEquals(5.seconds, reconnectBackoff(2))
+        assertEquals(5.seconds, reconnectBackoff(3))
+        assertEquals(15.seconds, reconnectBackoff(4))
+        assertEquals(15.seconds, reconnectBackoff(6))
+        assertEquals(30.seconds, reconnectBackoff(7))
+        assertEquals(30.seconds, reconnectBackoff(10))
+        assertEquals(60.seconds, reconnectBackoff(11))
+        assertEquals(60.seconds, reconnectBackoff(100))
+    }
 
     @Test
     fun repeatConnections() = runTest(timeout = 5.seconds) {

@@ -17,6 +17,10 @@ data class BlePlatformConfig(
     val sendPpogResetOnDisconnection: Boolean = false,
     val delayBleConnectionsAfterAppStart: Boolean = false,
     val delayBleDisconnections: Boolean = true,
+    /** Wait before retrying after repeated connection failures (tiers in reconnectBackoff()).
+     *  Off only in tests that drive many reconnects: the wait runs on the connection scope's
+     *  real-time dispatcher, not the test's virtual clock. */
+    val backoffReconnectsAfterFailures: Boolean = true,
     val fallbackToResetRequest: Boolean = false,
     val closeGattServerWhenBtDisabled: Boolean = true,
     val supportsBtClassic: Boolean = false,

@@ -631,7 +631,11 @@ class WatchManager(
                         logger.i("Device connecting too soon after init: delaying to make sure we were really disconnected")
                         delay(APP_START_WAIT_TO_CONNECT)
                     }
-                    val failureBackoff = reconnectBackoff(device.connectionFailureInfo?.times ?: 0)
+                    val failureBackoff = if (blePlatformConfig.backoffReconnectsAfterFailures) {
+                        reconnectBackoff(device.connectionFailureInfo?.times ?: 0)
+                    } else {
+                        Duration.ZERO
+                    }
                     if (failureBackoff > Duration.ZERO) {
                         // Unthrottled retry after a real failure just hammers the watch's radio
                         // (every attempt makes it wake and respond, win or lose) - confirmed live
@@ -663,16 +667,6 @@ class WatchManager(
             }
             watch.copy(activeConnection = connectionKoinScope)
         }
-    }
-
-    // Tiered backoff on repeated connection failures, matching rockworkd's proven approach for
-    // the same watch/BlueZ combination - unthrottled retry just hammers the watch's BLE radio.
-    private fun reconnectBackoff(failureCount: Int): Duration = when {
-        failureCount <= 1 -> Duration.ZERO
-        failureCount <= 3 -> 5.seconds
-        failureCount <= 6 -> 15.seconds
-        failureCount <= 10 -> 30.seconds
-        else -> 60.seconds
     }
 
     private fun Watch.updateFailureReason(newReason: ConnectionFailureReason?) {
@@ -821,3 +815,13 @@ private fun StateFlow<Map<PebbleIdentifier, Watch>>.flowOfAllDevices(): Flow<Map
 private fun Watch.color(): WatchColor = knownWatchProps?.color
     ?: scanResult?.leScanRecord?.extendedInfo?.color?.let { WatchColor.fromProtocolNumber(it.toInt()) }
     ?: WatchColor.Unknown
+
+// Tiered backoff on repeated connection failures, matching rockworkd's proven approach for
+// the same watch/BlueZ combination - unthrottled retry just hammers the watch's BLE radio.
+internal fun reconnectBackoff(failureCount: Int): Duration = when {
+    failureCount <= 1 -> Duration.ZERO
+    failureCount <= 3 -> 5.seconds
+    failureCount <= 6 -> 15.seconds
+    failureCount <= 10 -> 30.seconds
+    else -> 60.seconds
+}
