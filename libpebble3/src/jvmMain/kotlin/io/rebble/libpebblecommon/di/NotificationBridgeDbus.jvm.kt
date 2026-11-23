@@ -56,3 +56,18 @@ internal interface NotificationBridge1 : DBusInterface {
  *  memory. A lost owner (empty [newOwner]) is not: there is nothing to subscribe to yet. */
 internal fun bridgeOwnerGained(name: String?, newOwner: String?): Boolean =
     name == NOTIFICATION_BRIDGE_BUS_NAME && !newOwner.isNullOrEmpty()
+
+/** Hints that mark Lomiri's on-screen feedback bubble - the volume and brightness slider that
+ *  updates in place - rather than a notification. ayatana-indicator-sound sends one with
+ *  `x-lomiri-private-synchronous` on every volume step, so forwarding them put dozens of
+ *  "notifications" on the watch for one press-and-hold. `x-canonical-` is the pre-Lomiri name
+ *  older apps still send. Lomiri itself keys on the hint's presence, not its value. */
+internal val ON_SCREEN_FEEDBACK_HINTS = setOf(
+    "x-lomiri-private-synchronous",
+    "x-canonical-private-synchronous",
+)
+
+/** True when a bridged notification is on-screen feedback (see [ON_SCREEN_FEEDBACK_HINTS]) that
+ *  must not reach the watch. */
+internal fun isOnScreenFeedback(hints: Map<String, *>): Boolean =
+    hints.keys.any { it in ON_SCREEN_FEEDBACK_HINTS }

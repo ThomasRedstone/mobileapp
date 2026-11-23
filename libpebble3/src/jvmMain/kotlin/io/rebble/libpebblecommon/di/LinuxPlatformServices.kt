@@ -431,6 +431,8 @@ class LinuxNotificationListenerConnection(
         sessionBus.addSigHandler(HistoryService.EventsAdded::class.java, smsHandler)
 
         val bridgeHandler = DBusSigHandler<NotificationBridge1.NotificationReceived> { signal ->
+            // The volume/brightness bubble arrives as a Notify per step; it is not a notification.
+            if (isOnScreenFeedback(signal.hints)) return@DBusSigHandler
             val notification = buildTimelineNotification(
                 parentId = ANDROID_NOTIFICATIONS_UUID,
                 timestamp = Clock.System.now(),
