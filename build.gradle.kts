@@ -23,3 +23,13 @@ project.gradle.taskGraph.whenReady {
         it.enabled = false
     }
 }
+// compose-webview-multiplatform pulls an embedded Chromium (dev.datlag:kcef) into every jvm()
+// classpath, and kcef needs org.jogamp's OpenGL bindings, which are not on Maven Central.
+// composeApp already excludes it from its desktop classpaths; do the same for every module's
+// jvmTest runtime classpath, or `jvmTest` fails to resolve (seen in :libindex). The tests
+// never open a webview.
+subprojects {
+    configurations.matching { it.name == "jvmTestRuntimeClasspath" }.configureEach {
+        exclude(group = "dev.datlag", module = "kcef")
+    }
+}
