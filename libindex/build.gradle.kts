@@ -1,5 +1,6 @@
 
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import java.util.Properties
 
 plugins {
@@ -25,6 +26,19 @@ val properties = Properties().apply {
 }
 
 kotlin {
+    // A "mobile" source set shared by android and iOS only, for code that needs libraries with
+    // no jvm() variant. Declared through the hierarchy template, not by hand: a manual
+    // dependsOn() switches the default template off, after which iosArm64Main no longer
+    // includes iosMain (iOS: "expected ... has no actual declaration") and android treats
+    // mobileMain as a separate module (sealed types from commonMain can't be extended).
+    applyDefaultHierarchyTemplate {
+        common {
+            group("mobile") {
+                withCompilations { it.platformType == KotlinPlatformType.androidJvm }
+                group("ios") { withIos() }
+            }
+        }
+    }
 
 // Target declarations - add or remove as needed below. These define
 // which platforms this KMP module supports.
@@ -119,22 +133,19 @@ kotlin {
         // this module — the Scanning/Rings/IndexPairing interfaces and domain types
         // (IndexDevice, KnownIndexDevice, etc.) that callers actually depend on — is
         // haversine-free and stays in commonMain, shared with jvm too.
-        val mobileMain by creating {
-            dependsOn(commonMain.get())
+        val mobileMain by getting {
             dependencies {
                 implementation(libs.coredevices.haversine)
             }
         }
 
         androidMain {
-            dependsOn(mobileMain)
             dependencies {
                 implementation(libs.ktor.client.okhttp)
             }
         }
 
         iosMain {
-            dependsOn(mobileMain)
             dependencies {
                 implementation(libs.ktor.client.darwin)
             }

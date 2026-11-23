@@ -14,5 +14,5 @@ private class RealSpeexFrameDecoder(
         codec.decodeFrame(frame, pcmOut, hasHeaderByte = hasHeaderByte) == SpeexDecodeResult.Success
 }
 
-actual fun createSpeexFrameDecoder(sampleRate: Long, bitRate: Int, frameSize: Int): SpeexFrameDecoder =
+actual fun createSpeexFrameDecoder(sampleRate: Long, bitRate: Int, frameSize: Int): SpeexFrameDecoder? =
     RealSpeexFrameDecoder(sampleRate, bitRate, frameSize)

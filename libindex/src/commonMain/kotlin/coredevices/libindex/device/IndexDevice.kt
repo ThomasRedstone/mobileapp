@@ -3,7 +3,10 @@ package coredevices.libindex.device
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
-sealed interface IndexDevice {
+// Not sealed: the real implementations (RealIndexDevice etc.) live in mobileMain, because they
+// need coredevices.haversine, which has no jvm() variant. Kotlin only allows a sealed type's
+// inheritors in the source set that declares it.
+interface IndexDevice {
     val identifier: IndexIdentifier
     val name: String
 }

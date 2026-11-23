@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -10,6 +11,19 @@ plugins {
 }
 
 kotlin {
+    // A "mobile" source set shared by android and iOS only, for code that needs libraries with
+    // no jvm() variant. Declared through the hierarchy template, not by hand: a manual
+    // dependsOn() switches the default template off, after which iosArm64Main no longer
+    // includes iosMain (iOS: "expected ... has no actual declaration") and android treats
+    // mobileMain as a separate module (sealed types from commonMain can't be extended).
+    applyDefaultHierarchyTemplate {
+        common {
+            group("mobile") {
+                withCompilations { it.platformType == KotlinPlatformType.androidJvm }
+                group("ios") { withIos() }
+            }
+        }
+    }
     android {
         namespace = "coredevices.pebble"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -134,8 +148,7 @@ kotlin {
         // health-kmp-backed class) lives here; the crashlytics touch points instead go through
         // a small expect/actual seam (util/Crashlytics.kt) since they're a handful of one-line
         // calls, not worth a whole class split.
-        val mobileMain by creating {
-            dependsOn(commonMain.get())
+        val mobileMain by getting {
             dependencies {
                 implementation(libs.health.kmp)
                 implementation(libs.firebase.crashlytics)
@@ -146,7 +159,6 @@ kotlin {
         }
 
         androidMain {
-            dependsOn(mobileMain)
             dependencies {
                 // Add Android-specific dependencies here. Note that this source set depends on
                 // commonMain by default and will correctly pull the Android artifacts of any KMP
@@ -159,7 +171,6 @@ kotlin {
         }
 
         iosMain {
-            dependsOn(mobileMain)
             dependencies {
                 // Add iOS-specific dependencies here. This a source set created by Kotlin Gradle
                 // Plugin (KGP) that each specific iOS target (e.g., iosX64) depends on as
