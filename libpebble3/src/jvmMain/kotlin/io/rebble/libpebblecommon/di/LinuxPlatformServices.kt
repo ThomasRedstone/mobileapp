@@ -430,9 +430,19 @@ class LinuxNotificationListenerConnection(
         }
         sessionBus.addSigHandler(HistoryService.EventsAdded::class.java, smsHandler)
 
+        val policy = BridgedNotificationPolicy(now = { Clock.System.now() })
         val bridgeHandler = DBusSigHandler<NotificationBridge1.NotificationReceived> { signal ->
-            // The volume/brightness bubble arrives as a Notify per step; it is not a notification.
-            if (isOnScreenFeedback(signal.hints)) return@DBusSigHandler
+            val decision = policy.decide(
+                sourceAppId = signal.sourceAppId,
+                replacesId = signal.replacesId.toLong(),
+                summary = signal.summary,
+                body = signal.body,
+                hints = signal.hints.unwrapHints(),
+            )
+            if (decision != BridgedNotificationDecision.SendToWatch) {
+                linuxTelephonyLogger.d { "Not sending notification from ${signal.sourceAppId}: $decision" }
+                return@DBusSigHandler
+            }
             val notification = buildTimelineNotification(
                 parentId = ANDROID_NOTIFICATIONS_UUID,
                 timestamp = Clock.System.now(),

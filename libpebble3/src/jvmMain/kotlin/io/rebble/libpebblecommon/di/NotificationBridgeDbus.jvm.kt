@@ -67,7 +67,3 @@ internal val ON_SCREEN_FEEDBACK_HINTS = setOf(
     "x-canonical-private-synchronous",
 )
 
-/** True when a bridged notification is on-screen feedback (see [ON_SCREEN_FEEDBACK_HINTS]) that
- *  must not reach the watch. */
-internal fun isOnScreenFeedback(hints: Map<String, *>): Boolean =
-    hints.keys.any { it in ON_SCREEN_FEEDBACK_HINTS }
